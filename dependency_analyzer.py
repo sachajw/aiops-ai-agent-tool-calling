@@ -11,6 +11,7 @@ import json
 import subprocess
 import tempfile
 import shutil
+import requests
 from typing import Dict, List, Optional, Tuple
 from pathlib import Path
 from dotenv import load_dotenv
@@ -306,30 +307,39 @@ def check_pip_outdated(repo_path: str) -> str:
                         "current": "unspecified"
                     })
 
-        # Use pip list --outdated to check
-        result = subprocess.run(
-            ["pip", "list", "--outdated", "--format=json"],
-            capture_output=True,
-            text=True,
-            timeout=60
-        )
-
+        # Check each package against PyPI directly (more reliable than pip list --outdated)
         outdated_list = []
-        if result.stdout:
-            try:
-                pip_outdated = json.loads(result.stdout)
-                # Match with our requirements
-                req_names = {p["name"].lower() for p in packages}
 
-                for pkg in pip_outdated:
-                    if pkg["name"].lower() in req_names:
+        for pkg in packages:
+            try:
+                pkg_name = pkg["name"]
+                current_version = pkg.get("current", "unspecified")
+
+                # Skip if no version specified
+                if current_version == "unspecified":
+                    continue
+
+                # Query PyPI API for latest version
+                response = requests.get(
+                    f"https://pypi.org/pypi/{pkg_name}/json",
+                    timeout=5
+                )
+
+                if response.status_code == 200:
+                    pypi_data = response.json()
+                    latest_version = pypi_data["info"]["version"]
+
+                    # Compare versions (simple string comparison for now)
+                    if current_version != latest_version:
                         outdated_list.append({
-                            "name": pkg["name"],
-                            "current": pkg["version"],
-                            "latest": pkg["latest_version"]
+                            "name": pkg_name,
+                            "current": current_version,
+                            "latest": latest_version
                         })
-            except:
-                pass
+            except Exception as e:
+                # Skip packages that can't be checked
+                print(f"Warning: Could not check {pkg.get('name', 'unknown')}: {e}")
+                continue
 
         return json.dumps({
             "status": "success",
