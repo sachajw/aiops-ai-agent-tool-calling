@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.tools import tool
 from langchain_anthropic import ChatAnthropic
-from langgraph.prebuilt import create_react_agent
+from langchain.agents import create_agent
 
 # Load environment variables from .env file
 load_dotenv()
@@ -327,11 +327,11 @@ Error Handling:
 - If no outdated dependencies are found, congratulate them"""
 
     llm = ChatAnthropic(
-        model="claude-3-5-sonnet-20241022",
+        model="claude-sonnet-4-5-20250929",
         temperature=0
     )
 
-    agent_executor = create_react_agent(llm, tools, state_modifier=system_message)
+    agent_executor = create_agent(llm, tools, system_prompt=system_message)
 
     return agent_executor
 

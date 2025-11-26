@@ -419,7 +419,7 @@ Summary:
 Be precise with file contents and ensure all syntax is correct for the package manager being used."""
 
     llm = ChatAnthropic(
-        model="claude-3-5-sonnet-20241022",
+        model="claude-sonnet-4-5-20250929",
         temperature=0
     )
 

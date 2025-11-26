@@ -409,7 +409,7 @@ Total outdated: [count]
 Be thorough and accurate in your analysis. If you cannot determine the package manager or find dependency files, clearly state this in your report."""
 
     llm = ChatAnthropic(
-        model="claude-3-5-sonnet-20241022",
+        model="claude-sonnet-4-5-20250929",
         temperature=0
     )
 
