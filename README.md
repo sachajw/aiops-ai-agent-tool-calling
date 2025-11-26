@@ -1,22 +1,34 @@
-# AI Agent Tool Calling - Dependency Update System
+# AI Agent Tool Calling - Automated Dependency Update System
 
-A multi-agent Python system that uses LangChain's tool calling pattern to analyze repositories, identify outdated dependencies, and prepare comprehensive dependency update reports with testing strategies.
+A multi-agent Python system that uses LangChain's tool calling pattern to **automatically update dependencies with intelligent testing and rollback capabilities**. It analyzes repositories, updates dependencies, tests the changes, rolls back breaking updates, and creates Pull Requests or Issues automatically.
 
 ## 🌟 Features
 
-- **Multi-Agent Architecture**: Orchestrator pattern with specialized sub-agents
-- **AI-Powered Analysis**: Uses LangChain agents with Claude for intelligent dependency analysis
-- **Multi-Language Support**: Detects and checks dependencies for:
-  - JavaScript/Node.js (npm, yarn, pnpm)
-  - Python (pip, pipenv, poetry)
-  - Rust (cargo)
-  - Ruby (bundler)
-  - Java (Maven, Gradle)
-  - PHP (Composer)
-  - Go (go modules)
-- **Automatic Detection**: Identifies which package managers are used
-- **Testing Strategies**: Provides specific test commands for each package manager
-- **PR-Ready Output**: Generates comprehensive pull request descriptions
+### Core Capabilities
+- **🤖 Fully Automated Updates**: End-to-end automation from analysis to PR creation
+- **🧪 Intelligent Testing**: Automatically runs build/test commands to verify updates
+- **🔙 Smart Rollback**: Identifies breaking changes and rolls back only problematic major updates
+- **✅ Auto PR Creation**: Creates GitHub Pull Requests with successful updates
+- **🔴 Auto Issue Creation**: Creates GitHub Issues when updates can't be applied safely
+- **📊 Multi-Agent Architecture**: Orchestrator pattern with specialized sub-agents
+- **🧠 AI-Powered Analysis**: Uses Claude to analyze errors and identify problematic dependencies
+
+### Language Support
+Detects and updates dependencies for:
+- **JavaScript/Node.js** (npm, yarn, pnpm)
+- **Python** (pip, pipenv, poetry)
+- **Rust** (cargo)
+- **Ruby** (bundler)
+- **Java** (Maven, Gradle)
+- **PHP** (Composer)
+- **Go** (go modules)
+
+### Smart Features
+- **Automatic Build Detection**: Detects how to build, test, and verify your project
+- **Error Analysis**: AI-powered parsing of error messages to identify culprits
+- **Iterative Rollback**: Tries to salvage as many updates as possible
+- **Version Categorization**: Categorizes updates as major/minor/patch
+- **Comprehensive Reporting**: Detailed PR descriptions with what was updated and why
 
 ## 🏗️ Architecture
 
@@ -25,11 +37,93 @@ This project implements a multi-agent system following the [LangChain Tool Calli
 ### Agent Hierarchy
 
 ```
+auto_update_dependencies.py (Main Orchestrator) 🆕
+├── dependency_analyzer.py (Analysis Agent)
+│   └── Tools: clone, detect, check outdated
+├── smart_dependency_updater.py (Smart Update Agent) 🆕
+│   ├── Tools: detect build, test, write files, git ops
+│   └── Sub-tools: apply updates, rollback, parse errors
+└── dependency_operations.py (Helper Tools) 🆕
+    └── Tools: categorize, version lookup, error analysis
+
+Legacy Mode:
 dependency_update_agent.py (Orchestrator)
 ├── dependency_analyzer.py (Worker Agent)
-│   └── Tools: clone, detect, check outdated
 └── dependency_updater.py (Worker Agent)
-    └── Tools: update files, generate PR descriptions
+```
+
+### Complete Workflow Diagram
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  USER INPUT: Repository URL                                 │
+└─────────────────────────┬───────────────────────────────────┘
+                          │
+                          ▼
+┌─────────────────────────────────────────────────────────────┐
+│  STEP 1: ANALYZE REPOSITORY                                 │
+│  • Clone repository                                          │
+│  • Detect package manager                                    │
+│  • Find outdated dependencies                                │
+│  • Categorize: major/minor/patch                             │
+└─────────────────────────┬───────────────────────────────────┘
+                          │
+                          ▼
+┌─────────────────────────────────────────────────────────────┐
+│  STEP 2: APPLY ALL UPDATES                                  │
+│  • Update ALL dependencies to latest                         │
+│  • Including major version updates                           │
+│  • Write updated dependency files                            │
+└─────────────────────────┬───────────────────────────────────┘
+                          │
+                          ▼
+┌─────────────────────────────────────────────────────────────┐
+│  STEP 3: TEST UPDATES                                       │
+│  • Run install command                                       │
+│  • Run build command                                         │
+│  • Run test command                                          │
+│  • Capture all output                                        │
+└─────────────────────────┬───────────────────────────────────┘
+                          │
+                ┌─────────┴─────────┐
+                │                   │
+         Tests Pass?         Tests Fail?
+                │                   │
+                ▼                   ▼
+       ┌────────────────┐  ┌────────────────────────────┐
+       │ CREATE PR      │  │ ANALYZE ERROR              │
+       │                │  │ • Use AI to parse errors   │
+       │ • Git branch   │  │ • Identify problematic pkg │
+       │ • Commit       │  └───────────┬────────────────┘
+       │ • Push         │              │
+       │ • gh pr create │              ▼
+       └────────┬───────┘  ┌────────────────────────────┐
+                │          │ ROLLBACK MAJOR UPDATE      │
+                │          │ • Find latest in major ver │
+                │          │ • Update dependency file   │
+                │          │ • Write file               │
+                │          └───────────┬────────────────┘
+                │                      │
+                │                      ▼
+                │          ┌────────────────────────────┐
+                │          │ TEST AGAIN (Max 3x)        │
+                │          └───┬──────────────────┬─────┘
+                │              │                  │
+                │         Now Pass?          Still Fail?
+                │              │                  │
+                │              └──────┐    ┌──────┘
+                │                     │    │
+                ▼                     ▼    ▼
+       ┌────────────────┐  ┌──────────────────────────┐
+       │ SUCCESS!       │  │ CREATE ISSUE             │
+       │ PR Created     │  │ • Document what failed   │
+       │                │  │ • Include error logs     │
+       │ Output:        │  │ • Tag: dependencies      │
+       │ • PR URL       │  │                          │
+       │ • Summary      │  │ Output:                  │
+       │ • Rollbacks    │  │ • Issue URL              │
+       └────────────────┘  │ • Failure details        │
+                           └──────────────────────────┘
 ```
 
 ### 1. **Dependency Update Agent** (Orchestrator)
@@ -114,9 +208,40 @@ cp .env.example .env
 
 ## 🚀 Usage
 
-### Main Orchestrator Agent (Recommended)
+### Automated Update with Testing (New! Recommended)
 
-Run the main orchestrator which coordinates all sub-agents:
+The fully automated system that updates dependencies, tests them, and creates PRs:
+
+```bash
+python auto_update_dependencies.py <repository>
+```
+
+**Examples:**
+
+```bash
+# Using full URL
+python auto_update_dependencies.py https://github.com/expressjs/express
+
+# Using owner/repo format
+python auto_update_dependencies.py expressjs/express
+```
+
+**What it does:**
+1. 📊 Clones and analyzes your repository
+2. 🔄 Updates **all** dependencies to latest (including major versions)
+3. 🧪 Runs build and test commands
+4. 🔙 If tests fail: identifies problematic packages and rolls back major updates
+5. ✅ Creates a Pull Request if successful
+6. 🔴 Creates an Issue if updates can't be applied safely
+
+**Prerequisites:**
+- GitHub CLI installed and authenticated: `gh auth login`
+- Git push access to the repository
+- Package manager tools installed (npm, pip, cargo, etc.)
+
+### Manual Analysis Only
+
+Run the main orchestrator which only analyzes (no automatic PR):
 
 ```bash
 python dependency_update_agent.py <repository>
@@ -148,7 +273,101 @@ python dependency_analyzer.py https://github.com/owner/repo
 python dependency_updater.py npm '[{"name":"express","current":"4.17.1","latest":"4.18.2"}]'
 ```
 
-## 📊 Sample Output
+## 📊 Sample Workflows
+
+### Workflow 1: Successful Update with Rollback
+
+```
+Repository: myapp (Node.js project)
+
+📊 Analysis found 10 outdated packages:
+  - express: 4.17.0 → 5.0.0 (MAJOR)
+  - lodash: 4.17.20 → 4.17.21 (PATCH)
+  - react: 17.0.0 → 18.2.0 (MAJOR)
+  - axios: 0.21.0 → 1.6.0 (MAJOR)
+  ... 6 more
+
+🔄 Applying all updates...
+✅ Updated package.json
+
+🧪 Testing updates...
+  ❌ npm test failed
+
+🔍 Analyzing error...
+  Identified: React 18 breaking change in test utilities
+
+🔙 Rolling back React 18 → 17...
+  Finding latest React 17.x: 17.0.2
+  ✅ Rolled back to react@17.0.2
+
+🧪 Testing again...
+  ✅ npm install - success
+  ✅ npm run build - success
+  ✅ npm test - success
+
+✅ Creating Pull Request...
+  Branch: deps/auto-update-20250126
+  PR: https://github.com/owner/myapp/pull/123
+
+RESULT:
+✅ Successfully updated 10 dependencies!
+  - Applied 9 updates to latest versions
+  - Rolled back React 18.2.0 → 17.0.2 (breaking changes)
+  - All tests passing
+
+📝 PR Summary:
+  - express 4.17.0 → 5.0.0 ✅
+  - lodash 4.17.20 → 4.17.21 ✅
+  - react 17.0.0 → 17.0.2 (rolled back from 18.2.0)
+  - axios 0.21.0 → 1.6.0 ✅
+  - ... 6 more ✅
+```
+
+### Workflow 2: Failed Update (Issue Created)
+
+```
+Repository: legacy-app (Python project)
+
+📊 Analysis found 5 outdated packages:
+  - django: 2.2 → 4.2 (MAJOR)
+  - requests: 2.25.0 → 2.31.0 (MINOR)
+  ... 3 more
+
+🔄 Applying all updates...
+✅ Updated requirements.txt
+
+🧪 Testing updates...
+  ❌ pytest failed
+
+🔍 Analyzing error...
+  Identified: Django 4.x breaking changes in models
+
+🔙 Rolling back Django 4.2 → 2.2...
+  Finding latest Django 2.x: 2.2.28
+  ✅ Rolled back to Django 2.2.28
+
+🧪 Testing again...
+  ❌ pytest still failing
+
+🔍 Analyzing error...
+  Identified: Compatibility issues with Python version
+
+🔴 Cannot apply updates safely
+
+📋 Creating Issue...
+  Issue: https://github.com/owner/legacy-app/issues/45
+
+RESULT:
+❌ Updates could not be applied safely
+
+Issue created with details:
+  - Attempted updates to 5 packages
+  - Django major update causes breaking changes
+  - Python version compatibility issues detected
+  - Manual review and migration needed
+```
+
+## 📊 Sample Output (Legacy Mode)
 
 ### Orchestrator Agent Output
 
