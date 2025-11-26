@@ -9,9 +9,35 @@ to perform GitHub operations like creating PRs and issues without requiring the 
 import os
 import json
 import subprocess
+import threading
 from typing import Dict, Optional
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+
+# Thread-local storage for event loops
+_thread_local = threading.local()
+
+
+def _get_event_loop():
+    """Get or create an event loop for the current thread."""
+    import asyncio
+
+    if not hasattr(_thread_local, 'loop') or _thread_local.loop is None or _thread_local.loop.is_closed():
+        try:
+            # Try to get the current event loop
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # If there's a running loop in this thread, create a new one
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+        except RuntimeError:
+            # No event loop exists in this thread, create one
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+        _thread_local.loop = loop
+
+    return _thread_local.loop
 
 
 class GitHubMCPClient:
@@ -267,6 +293,7 @@ def create_pr_sync(
         Dictionary with PR URL or error
     """
     import asyncio
+    import threading
 
     # Parse repo_name
     parts = repo_name.split("/")
@@ -290,7 +317,9 @@ def create_pr_sync(
             )
 
     try:
-        return asyncio.run(_create_pr())
+        # Get or create event loop for this thread
+        loop = _get_event_loop()
+        return loop.run_until_complete(_create_pr())
     except Exception as e:
         return {
             "status": "error",
@@ -319,6 +348,7 @@ def create_issue_sync(
         Dictionary with Issue URL or error
     """
     import asyncio
+    import threading
 
     # Parse repo_name
     parts = repo_name.split("/")
@@ -345,7 +375,9 @@ def create_issue_sync(
             )
 
     try:
-        return asyncio.run(_create_issue())
+        # Get or create event loop for this thread
+        loop = _get_event_loop()
+        return loop.run_until_complete(_create_issue())
     except Exception as e:
         return {
             "status": "error",
