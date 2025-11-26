@@ -366,7 +366,7 @@ def git_operations(repo_path: str, operation: str, **kwargs) -> str:
 @tool
 def create_github_pr(repo_name: str, branch_name: str, title: str, body: str, base_branch: str = "main") -> str:
     """
-    Create a GitHub Pull Request using gh CLI.
+    Create a GitHub Pull Request using GitHub MCP.
 
     Args:
         repo_name: Repository in owner/repo format
@@ -379,54 +379,39 @@ def create_github_pr(repo_name: str, branch_name: str, title: str, body: str, ba
         JSON with PR URL or error
     """
     try:
-        result = subprocess.run(
-            [
-                "gh", "pr", "create",
-                "--repo", repo_name,
-                "--head", branch_name,
-                "--base", base_branch,
-                "--title", title,
-                "--body", body
-            ],
-            capture_output=True,
-            text=True,
-            timeout=30
+        from github_mcp_client import create_pr_sync
+
+        result = create_pr_sync(
+            repo_name=repo_name,
+            branch_name=branch_name,
+            title=title,
+            body=body,
+            base_branch=base_branch
         )
 
-        if result.returncode == 0:
-            pr_url = result.stdout.strip()
+        if result["status"] == "success":
             return json.dumps({
                 "status": "success",
-                "pr_url": pr_url,
-                "message": f"Successfully created PR: {pr_url}"
+                "pr_url": result["pr_url"],
+                "message": result["message"]
             })
         else:
             return json.dumps({
                 "status": "error",
-                "message": f"Failed to create PR: {result.stderr}"
+                "message": result["message"]
             })
 
-    except subprocess.TimeoutExpired:
-        return json.dumps({
-            "status": "error",
-            "message": "PR creation timed out"
-        })
-    except FileNotFoundError:
-        return json.dumps({
-            "status": "error",
-            "message": "gh CLI not found. Please install GitHub CLI: https://cli.github.com/"
-        })
     except Exception as e:
         return json.dumps({
             "status": "error",
-            "message": f"Error creating PR: {str(e)}"
+            "message": f"Error creating PR via MCP: {str(e)}"
         })
 
 
 @tool
 def create_github_issue(repo_name: str, title: str, body: str, labels: str = "dependencies") -> str:
     """
-    Create a GitHub Issue using gh CLI.
+    Create a GitHub Issue using GitHub MCP.
 
     Args:
         repo_name: Repository in owner/repo format
@@ -438,50 +423,31 @@ def create_github_issue(repo_name: str, title: str, body: str, labels: str = "de
         JSON with Issue URL or error
     """
     try:
-        cmd = [
-            "gh", "issue", "create",
-            "--repo", repo_name,
-            "--title", title,
-            "--body", body
-        ]
+        from github_mcp_client import create_issue_sync
 
-        if labels:
-            cmd.extend(["--label", labels])
-
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=30
+        result = create_issue_sync(
+            repo_name=repo_name,
+            title=title,
+            body=body,
+            labels=labels
         )
 
-        if result.returncode == 0:
-            issue_url = result.stdout.strip()
+        if result["status"] == "success":
             return json.dumps({
                 "status": "success",
-                "issue_url": issue_url,
-                "message": f"Successfully created issue: {issue_url}"
+                "issue_url": result["issue_url"],
+                "message": result["message"]
             })
         else:
             return json.dumps({
                 "status": "error",
-                "message": f"Failed to create issue: {result.stderr}"
+                "message": result["message"]
             })
 
-    except subprocess.TimeoutExpired:
-        return json.dumps({
-            "status": "error",
-            "message": "Issue creation timed out"
-        })
-    except FileNotFoundError:
-        return json.dumps({
-            "status": "error",
-            "message": "gh CLI not found. Please install GitHub CLI: https://cli.github.com/"
-        })
     except Exception as e:
         return json.dumps({
             "status": "error",
-            "message": f"Error creating issue: {str(e)}"
+            "message": f"Error creating issue via MCP: {str(e)}"
         })
 
 

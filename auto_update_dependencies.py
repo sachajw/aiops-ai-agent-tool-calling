@@ -172,7 +172,8 @@ Example Failure Report:
 Error Handling:
 - If repository doesn't exist or is private: inform user
 - If no outdated dependencies: congratulate user
-- If gh CLI not installed: provide installation instructions
+- If GitHub MCP server not installed: provide installation instructions
+- If GITHUB_PERSONAL_ACCESS_TOKEN not set: provide setup instructions
 - If git push fails: explain authentication needed"""
 
     llm = ChatAnthropic(
@@ -212,12 +213,16 @@ What it does:
   6. 🔴 Creates Issue if updates can't be applied safely
 
 Prerequisites:
-  - GitHub CLI (gh) installed and authenticated
+  - GitHub MCP server installed at /usr/local/bin/github-mcp-server
+  - GITHUB_PERSONAL_ACCESS_TOKEN environment variable set
   - Git configured with push access to the repository
   - Package manager tools installed (npm, pip, cargo, etc.)
 
-Authentication:
-  Run: gh auth login
+Setup GitHub Access:
+  1. Create token at: https://github.com/settings/tokens
+     Required scopes: repo, workflow
+  2. Set environment variable:
+     export GITHUB_PERSONAL_ACCESS_TOKEN='your_token_here'
 """)
         sys.exit(1)
 
@@ -247,43 +252,38 @@ Authentication:
     # Check prerequisites
     print("🔍 Checking prerequisites...")
 
-    # Check gh CLI
+    # Check for GitHub MCP server binary
     import subprocess
     try:
         result = subprocess.run(
-            ["gh", "--version"],
+            ["/usr/local/bin/github-mcp-server", "--version"],
             capture_output=True,
             text=True,
             timeout=5
         )
         if result.returncode == 0:
-            print("  ✅ GitHub CLI (gh) found")
+            print("  ✅ GitHub MCP server found")
         else:
-            print("  ❌ GitHub CLI (gh) not working properly")
-            print("     Install: https://cli.github.com/")
+            print("  ❌ GitHub MCP server not working properly")
+            print("     Install: https://github.com/github/github-mcp-server")
             sys.exit(1)
     except FileNotFoundError:
-        print("  ❌ GitHub CLI (gh) not found")
-        print("     Install: https://cli.github.com/")
-        print("     Then run: gh auth login")
+        print("  ❌ GitHub MCP server not found at /usr/local/bin/github-mcp-server")
+        print("     Install: https://github.com/github/github-mcp-server")
         sys.exit(1)
 
-    # Check gh auth
-    try:
-        result = subprocess.run(
-            ["gh", "auth", "status"],
-            capture_output=True,
-            text=True,
-            timeout=5
-        )
-        if result.returncode == 0:
-            print("  ✅ GitHub CLI authenticated")
-        else:
-            print("  ❌ GitHub CLI not authenticated")
-            print("     Run: gh auth login")
-            sys.exit(1)
-    except:
-        print("  ⚠️  Could not verify GitHub CLI authentication")
+    # Check for GitHub Personal Access Token
+    github_token = os.getenv("GITHUB_PERSONAL_ACCESS_TOKEN")
+    if github_token:
+        print("  ✅ GITHUB_PERSONAL_ACCESS_TOKEN found")
+    else:
+        print("  ❌ GITHUB_PERSONAL_ACCESS_TOKEN not set")
+        print("     Set your GitHub token:")
+        print("     export GITHUB_PERSONAL_ACCESS_TOKEN='your_token_here'")
+        print()
+        print("     Create a token at: https://github.com/settings/tokens")
+        print("     Required scopes: repo, workflow")
+        sys.exit(1)
 
     print()
 
