@@ -118,7 +118,56 @@ source ~/.zshrc
 
 ## Testing the Integration
 
-### Test Connection
+### Quick Test (Recommended)
+
+Fast verification that everything is working:
+
+```bash
+python quick_test_mcp.py
+```
+
+Expected output:
+```
+🚀 Quick GitHub MCP Connection Test
+==================================================
+✅ Token found (40 chars)
+✅ MCP client module loaded
+
+🔌 Connecting to GitHub MCP server...
+✅ Connected to GitHub MCP server!
+✅ 15 tools available
+
+📋 Available tools (first 5):
+   • create_pull_request
+   • create_issue
+   • get_repository
+   • list_pull_requests
+   • get_pull_request
+
+==================================================
+✅ GitHub MCP is working correctly!
+==================================================
+```
+
+### Comprehensive Diagnostics
+
+For troubleshooting or first-time setup:
+
+```bash
+python diagnose_github_mcp.py
+```
+
+This runs 9 comprehensive tests and provides detailed error messages.
+
+### stdio Mode Verification
+
+To specifically test stdio mode communication:
+
+```bash
+python test_mcp_stdio.py
+```
+
+### Original Basic Test
 
 Test if the GitHub MCP server is working:
 
@@ -203,6 +252,7 @@ print(result)
    - `GitHubMCPClient` class for async operations
    - `create_pr_sync()` - Synchronous PR creation wrapper
    - `create_issue_sync()` - Synchronous issue creation wrapper
+   - Runs GitHub MCP server in stdio mode via Docker
 
 2. **smart_dependency_updater.py** - Updated to use MCP
    - `create_github_pr()` tool - Uses MCP instead of gh CLI
@@ -225,13 +275,26 @@ github_mcp_client.py
        ↓
 GitHubMCPClient (async)
        ↓
-MCP Protocol over stdio
+MCP Protocol over stdio (IMPORTANT: server runs in stdio mode)
        ↓
 Docker Container
-  ghcr.io/github/github-mcp-server
+  ghcr.io/github/github-mcp-server stdio
        ↓
 GitHub REST API
 ```
+
+### Important: stdio Mode
+
+The GitHub MCP server **must** run in stdio mode for MCP protocol communication:
+
+```bash
+docker run -i --rm \
+  -e GITHUB_PERSONAL_ACCESS_TOKEN='token' \
+  ghcr.io/github/github-mcp-server \
+  stdio  # ← Required argument
+```
+
+Without the `stdio` argument, the server will not respond to MCP requests.
 
 ## Available MCP Tools
 

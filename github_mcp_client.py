@@ -46,12 +46,14 @@ def _get_event_loop():
 class GitHubMCPClient:
     """Client for interacting with GitHub via MCP server running inside Docker."""
 
-    def __init__(self, github_token: Optional[str] = None):
+    def __init__(self, github_token: Optional[str] = None, toolsets: Optional[str] = None):
         """
         Initialize GitHub MCP client.
 
         Args:
             github_token: GitHub Personal Access Token (falls back to env var)
+            toolsets: Comma-separated list of toolsets to enable (e.g., "repos,issues,pull_requests")
+                     Use "all" to enable all toolsets. Defaults to basic toolsets.
         """
         self.github_token = github_token or os.getenv("GITHUB_PERSONAL_ACCESS_TOKEN")
         if not self.github_token:
@@ -60,16 +62,27 @@ class GitHubMCPClient:
                 "environment variable or pass token to constructor."
             )
 
-        # Updated: Use Docker to run the GitHub MCP Server
+        # Updated: Use Docker to run the GitHub MCP Server in stdio mode
+        # Based on: https://github.com/github/github-mcp-server
+        docker_args = [
+            "run",
+            "-i",
+            "--rm",
+            "-e", f"GITHUB_PERSONAL_ACCESS_TOKEN={self.github_token}",
+        ]
+
+        # Add optional toolsets configuration
+        if toolsets:
+            docker_args.extend(["-e", f"GITHUB_TOOLSETS={toolsets}"])
+
+        docker_args.extend([
+            "ghcr.io/github/github-mcp-server",
+            "stdio"  # Run in stdio mode for MCP communication
+        ])
+
         self.server_params = StdioServerParameters(
             command="docker",
-            args=[
-                "run",
-                "-i",
-                "--rm",
-                "-e", "GITHUB_PERSONAL_ACCESS_TOKEN",  # Pass through env var
-                "ghcr.io/github/github-mcp-server"
-            ],
+            args=docker_args,
             env={
                 "GITHUB_PERSONAL_ACCESS_TOKEN": self.github_token
             }
