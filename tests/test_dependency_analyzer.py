@@ -385,8 +385,26 @@ class TestCleanupRepository:
     """Test cases for cleanup_repository function."""
 
     def test_cleanup_valid_path(self):
-        """Test cleanup of a valid temporary repository path."""
-        temp_dir = tempfile.mkdtemp(prefix="dep_analyzer_")
+        """Test cleanup of a valid temporary repository path.
+
+        Note: cleanup_repository only accepts paths starting with /tmp/dep_analyzer_
+        or /tmp/repo_check_ for safety. We create the directory explicitly in /tmp.
+        """
+        # Create directory explicitly in /tmp with the expected prefix
+        temp_dir = "/tmp/dep_analyzer_test_cleanup"
+        os.makedirs(temp_dir, exist_ok=True)
+        with open(os.path.join(temp_dir, "test.txt"), "w") as f:
+            f.write("test")
+
+        result = json.loads(cleanup_repository.invoke(temp_dir))
+
+        assert result["status"] == "success"
+        assert not os.path.exists(temp_dir)
+
+    def test_cleanup_repo_check_prefix(self):
+        """Test cleanup with repo_check_ prefix."""
+        temp_dir = "/tmp/repo_check_test_cleanup"
+        os.makedirs(temp_dir, exist_ok=True)
         with open(os.path.join(temp_dir, "test.txt"), "w") as f:
             f.write("test")
 
