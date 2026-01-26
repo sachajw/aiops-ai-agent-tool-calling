@@ -43,15 +43,143 @@ def _get_event_loop():
     return _thread_local.loop
 
 
-class GitHubMCPClient:
-    """Client for interacting with GitHub via MCP server running inside Docker."""
+def _find_command_path(command: str) -> Optional[str]:
+    """
+    Find the full path to a command, checking common locations.
 
-    def __init__(self, github_token: Optional[str] = None):
+    Args:
+        command: Command name to find (e.g., 'docker', 'podman')
+
+    Returns:
+        Full path to command if found, None otherwise
+    """
+    import shutil
+
+    # First try using shutil.which (respects PATH)
+    cmd_path = shutil.which(command)
+    if cmd_path:
+        return cmd_path
+
+    # Common installation paths for macOS
+    common_paths_mac = [
+        f'/usr/local/bin/{command}',
+        f'/opt/homebrew/bin/{command}',
+        f'/usr/bin/{command}',
+        f'/opt/local/bin/{command}',
+        # OrbStack specific paths
+        f'/Applications/OrbStack.app/Contents/MacOS/{command}',
+        f'~/.orbstack/bin/{command}',
+    ]
+
+    # Common installation paths for Linux
+    common_paths_linux = [
+        f'/usr/local/bin/{command}',
+        f'/usr/bin/{command}',
+        f'/bin/{command}',
+        f'/snap/bin/{command}',
+        f'~/.local/bin/{command}',
+    ]
+
+    # Try macOS paths first, then Linux
+    all_paths = common_paths_mac + common_paths_linux
+
+    # Expand ~ and check if file exists
+    for path in all_paths:
+        expanded_path = os.path.expanduser(path)
+        if os.path.isfile(expanded_path) and os.access(expanded_path, os.X_OK):
+            return expanded_path
+
+    return None
+
+
+def _detect_container_runtime() -> str:
+    """
+    Auto-detect available container runtime.
+
+    Checks for container runtimes in order of preference:
+    1. docker (Docker Desktop, OrbStack, Rancher Desktop)
+    2. podman (Podman Desktop, native Podman)
+    3. nerdctl (containerd with nerdctl)
+
+    Returns:
+        Full path or name of the detected container runtime command
+
+    Raises:
+        RuntimeError: If no container runtime is found
+    """
+    runtimes = ['docker', 'podman', 'nerdctl']
+
+    for runtime in runtimes:
+        # Try to find the command path
+        cmd_path = _find_command_path(runtime)
+
+        if cmd_path:
+            # Verify it works by running --version
+            try:
+                result = subprocess.run(
+                    [cmd_path, '--version'],
+                    capture_output=True,
+                    timeout=5,
+                    text=True
+                )
+                if result.returncode == 0:
+                    # Return the full path if it's not standard, otherwise just the name
+                    if cmd_path != runtime and not cmd_path.startswith('/usr/'):
+                        return cmd_path
+                    return runtime
+            except (subprocess.TimeoutExpired, Exception):
+                continue
+
+    # Provide helpful error message
+    error_msg = (
+        "No container runtime found. Please ensure one of the following is installed:\n"
+        "  • Docker Desktop: https://www.docker.com/products/docker-desktop\n"
+        "  • OrbStack (macOS): https://orbstack.dev/\n"
+        "  • Podman Desktop: https://podman-desktop.io/\n"
+        "  • Rancher Desktop: https://rancherdesktop.io/\n\n"
+        "If you have OrbStack or Docker installed:\n"
+        "1. Ensure it's running (open the application)\n"
+        "2. Verify with: docker --version (in terminal)\n"
+        "3. If terminal works but Python doesn't, the issue is PATH.\n\n"
+        "For macOS users, add docker to PATH:\n"
+        "  echo 'export PATH=\"/usr/local/bin:/opt/homebrew/bin:$PATH\"' >> ~/.zshrc\n"
+        "  source ~/.zshrc\n\n"
+        "Checked locations:\n"
+        "  - $PATH (using shutil.which)\n"
+        "  - /usr/local/bin/docker\n"
+        "  - /opt/homebrew/bin/docker\n"
+        "  - /usr/bin/docker\n"
+        "  - ~/.orbstack/bin/docker\n"
+        "  - /Applications/OrbStack.app/Contents/MacOS/docker"
+    )
+    raise RuntimeError(error_msg)
+
+
+class GitHubMCPClient:
+    """
+    Client for interacting with GitHub via MCP server running inside a container.
+
+    Supports multiple container runtimes:
+    - Docker Desktop
+    - OrbStack (macOS Docker alternative)
+    - Podman Desktop
+    - Rancher Desktop
+    - Native Podman
+    - containerd with nerdctl
+    """
+
+    def __init__(self, github_token: Optional[str] = None, toolsets: Optional[str] = None,
+                 container_runtime: Optional[str] = None):
         """
         Initialize GitHub MCP client.
 
         Args:
             github_token: GitHub Personal Access Token (falls back to env var)
+            toolsets: Comma-separated list of toolsets to enable (e.g., "repos,issues,pull_requests")
+                     Use "all" to enable all toolsets. Defaults to basic toolsets.
+            container_runtime: Container runtime to use (docker, podman, nerdctl)
+                              If not specified, auto-detects available runtime.
+                              Works with Docker Desktop, OrbStack, Podman, etc.
         """
         self.github_token = github_token or os.getenv("GITHUB_PERSONAL_ACCESS_TOKEN")
         if not self.github_token:
@@ -60,16 +188,34 @@ class GitHubMCPClient:
                 "environment variable or pass token to constructor."
             )
 
-        # Updated: Use Docker to run the GitHub MCP Server
+        # Auto-detect or use specified container runtime
+        # Works with Docker Desktop, OrbStack, Podman, Rancher Desktop, etc.
+        if container_runtime:
+            self.container_runtime = container_runtime
+        else:
+            self.container_runtime = _detect_container_runtime()
+
+        # Build container arguments
+        # Based on: https://github.com/github/github-mcp-server
+        container_args = [
+            "run",
+            "-i",
+            "--rm",
+            "-e", f"GITHUB_PERSONAL_ACCESS_TOKEN={self.github_token}",
+        ]
+
+        # Add optional toolsets configuration
+        if toolsets:
+            container_args.extend(["-e", f"GITHUB_TOOLSETS={toolsets}"])
+
+        container_args.extend([
+            "ghcr.io/github/github-mcp-server",
+            "stdio"  # Run in stdio mode for MCP communication
+        ])
+
         self.server_params = StdioServerParameters(
-            command="docker",
-            args=[
-                "run",
-                "-i",
-                "--rm",
-                "-e", "GITHUB_PERSONAL_ACCESS_TOKEN",  # Pass through env var
-                "ghcr.io/github/github-mcp-server"
-            ],
+            command=self.container_runtime,
+            args=container_args,
             env={
                 "GITHUB_PERSONAL_ACCESS_TOKEN": self.github_token
             }
@@ -225,8 +371,9 @@ class GitHubMCPClient:
             labels = ["dependencies"]
 
         try:
+            # Use issue_write tool (actual tool name in GitHub MCP)
             result = await self.session.call_tool(
-                "create_issue",
+                "issue_write",
                 arguments={
                     "owner": repo_owner,
                     "repo": repo_name,
@@ -275,11 +422,11 @@ class GitHubMCPClient:
             raise RuntimeError("Session not initialized. Use async context manager.")
 
         try:
+            # Use search_repositories to find the repo
             result = await self.session.call_tool(
-                "get_repository",
+                "search_repositories",
                 arguments={
-                    "owner": repo_owner,
-                    "repo": repo_name
+                    "query": f"repo:{repo_owner}/{repo_name}"
                 }
             )
 

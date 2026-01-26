@@ -217,6 +217,93 @@ cp .env.example .env
 # Edit .env and add your API key
 ```
 
+### GitHub MCP Setup (Required for PR/Issue Creation)
+
+The system uses GitHub MCP (Model Context Protocol) to create Pull Requests and Issues automatically.
+
+#### Prerequisites
+
+1. **Container Runtime** (Docker, OrbStack, Podman, etc.)
+   - **macOS**: Install [OrbStack](https://orbstack.dev/) (recommended) or [Docker Desktop](https://www.docker.com/products/docker-desktop)
+   - **Windows/Linux**: Install [Docker Desktop](https://www.docker.com/products/docker-desktop)
+
+2. **GitHub Personal Access Token**
+   - Create at: https://github.com/settings/tokens
+   - Required scopes: `repo`, `workflow`
+
+#### Setup Steps
+
+**1. Install Container Runtime (if not already installed)**
+
+macOS (choose one):
+```bash
+# Option 1: OrbStack (recommended - lightweight and fast)
+brew install orbstack
+
+# Option 2: Docker Desktop
+# Download from https://www.docker.com/products/docker-desktop
+```
+
+**2. Fix PATH for macOS/OrbStack Users**
+
+If you're on macOS and encounter "docker: command not found" errors in Python:
+
+```bash
+# Add to your shell configuration
+echo 'export PATH="/usr/local/bin:/opt/homebrew/bin:$PATH"' >> ~/.zshrc
+source ~/.zshrc
+```
+
+For bash users:
+```bash
+echo 'export PATH="/usr/local/bin:/opt/homebrew/bin:$PATH"' >> ~/.bash_profile
+source ~/.bash_profile
+```
+
+**3. Set GitHub Token**
+
+```bash
+export GITHUB_PERSONAL_ACCESS_TOKEN='your_github_token_here'
+```
+
+To make it permanent:
+```bash
+# For zsh (macOS default)
+echo 'export GITHUB_PERSONAL_ACCESS_TOKEN="your_token"' >> ~/.zshrc
+source ~/.zshrc
+
+# For bash
+echo 'export GITHUB_PERSONAL_ACCESS_TOKEN="your_token"' >> ~/.bash_profile
+source ~/.bash_profile
+```
+
+**4. Verify Setup**
+
+Test your GitHub MCP setup:
+```bash
+python diagnose_github_mcp.py
+```
+
+Expected output:
+```
+✅ Container runtime: PASS
+✅ GitHub token: PASS
+✅ MCP connection: PASS
+✅ MCP tool call: PASS
+```
+
+If any tests fail, the diagnostic tool will show specific instructions to fix the issue.
+
+#### Supported Container Runtimes
+
+The system automatically detects and works with:
+- **Docker Desktop** - Official Docker
+- **OrbStack** - Lightweight Docker alternative for macOS
+- **Podman Desktop** - Daemonless container engine
+- **Rancher Desktop** - Kubernetes + containers
+
+No configuration needed - it auto-detects which one you have installed!
+
 ## 🚀 Usage
 
 ### Automated Update with Testing (New! Recommended)
@@ -545,13 +632,57 @@ Update all three agent files and set your OpenAI API key:
 export OPENAI_API_KEY='your-api-key-here'
 ```
 
+## 🗂️ Caching
+
+The system includes smart caching to improve performance and reduce API calls:
+
+### How Caching Works
+
+- **Repository Caching**: Cloned repositories are cached locally to avoid re-cloning
+- **Analysis Caching**: Dependency analysis results are cached
+- **Outdated Package Caching**: Results from package registry checks are cached
+- **TTL-Based Expiration**: Cache expires after a configurable time period
+
+### Configuration
+
+Set cache expiry time in hours via environment variable:
+
+```bash
+# Set in .env file or export
+CACHE_EXPIRY_HOURS=24  # Default: 24 hours
+```
+
+### Cache Location
+
+Cache is stored at: `~/.cache/ai-dependency-updater/`
+
+### Cache Management
+
+```bash
+# View cache statistics
+python repository_cache.py stats
+
+# Clean up expired cache entries
+python repository_cache.py cleanup
+
+# Clear all cache
+python repository_cache.py clear
+```
+
+### Cache Benefits
+
+- ⚡ **Faster repeated analyses** - No need to re-clone repositories
+- 💰 **Reduced API calls** - Cached package registry lookups
+- 🌐 **Works offline** - Can analyze previously cached repositories
+- 📊 **Smart invalidation** - Automatic expiration based on TTL
+
 ## ⚠️ Limitations
 
 - Some package managers require additional tools (e.g., `cargo-outdated` for Rust)
-- Large repositories may take time to clone and analyze
+- Large repositories may take time to clone and analyze (first time only, then cached)
 - Some checks require the package manager to be installed locally
-- Network connectivity required for cloning and checking updates
-- Requires Docker for GitHub MCP integration
+- Network connectivity required for cloning and checking updates (unless using cache)
+- Requires container runtime (Docker/OrbStack/Podman) for GitHub MCP integration
 - Automatically creates PRs on success and Issues when updates fail
 
 ## 📝 Example Scenarios
