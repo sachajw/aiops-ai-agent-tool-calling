@@ -1,0 +1,362 @@
+#!/usr/bin/env python3
+"""
+Dependency Analyzer Agent
+
+Analyzes a repository to identify its package manager, locate dependency files,
+and identify outdated dependencies.
+"""
+
+import json
+import os
+import shutil
+import subprocess
+import tempfile
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+
+import requests
+from dotenv import load_dotenv
+from langchain.agents import create_agent
+from langchain_anthropic import ChatAnthropic
+from langchain_core.tools import tool
+
+from src.config import language_map as LanguageMap
+
+# Import caching module
+from src.services.cache import get_cache
+
+# Load environment variables from .env file
+load_dotenv()
+
+
+@tool
+def clone_repository(repo_url: str) -> str:
+    """
+    Clone a git repository to a temporary directory with caching support.
+
+    Args:
+        repo_url: The URL of the git repository to clone (e.g., https://github.com/owner/repo)
+
+    Returns:
+        JSON string with status and repository path
+    """
+    try:
+        cache = get_cache()
+
+        # Check if the repository is already cached
+        cached_path = cache.get_cached_repository(repo_url)
+        if cached_path:
+            # Copy cached repo to temp directory
+            temp_dir = tempfile.mkdtemp(prefix="dep_analyzer_")
+            shutil.copytree(cached_path, temp_dir, dirs_exist_ok=True)
+
+            return json.dumps(
+                {
+                    "status": "success",
+                    "repo_path": temp_dir,
+                    "message": f"Repository loaded from cache to {temp_dir}",
+                    "from_cache": True,
+                }
+            )
+
+        # Clone fresh repository
+        temp_dir = tempfile.mkdtemp(prefix="dep_analyzer_")
+        result = subprocess.run(
+            ["git", "clone", "--depth", "1", repo_url, temp_dir],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+
+        if result.returncode != 0:
+            return json.dumps(
+                {
+                    "status": "error",
+                    "message": f"Failed to clone repository: {result.stderr}",
+                }
+            )
+
+        # Cache the cloned repository
+        try:
+            cache.cache_repository(repo_url, temp_dir)
+        except Exception as cache_error:
+            # Don't fail if caching fails
+            print(f"Warning: Failed to cache repository: {cache_error}")
+
+        return json.dumps(
+            {
+                "status": "success",
+                "repo_path": temp_dir,
+                "message": f"Repository cloned successfully to {temp_dir}",
+                "from_cache": False,
+            }
+        )
+    except Exception as e:
+        return json.dumps(
+            {"status": "error", "message": f"Error cloning repository: {str(e)}"}
+        )
+
+
+@tool
+def detect_package_manager(repo_path: Path) -> str:
+    """
+    Detect language, package manager, build command, and outdated dependency command for a repository.
+
+    Returns:
+        JSON string with keys:
+        - language
+        - package_manager
+        - build_command
+        - outdated_command
+    """
+    language_map = LanguageMap.LANGUAGE_PACKAGE_BUILD_MAP
+    repo_files = {p.name for p in repo_path.rglob("*") if p.is_file()}
+
+    for language, lang_cfg in language_map.items():
+        # 1. Detect language
+        detect_files = lang_cfg.get("detect_files", [])
+        language_detected = False
+
+        for f in detect_files:
+            if f in repo_files or any(Path(p).match(f) for p in repo_files):
+                language_detected = True
+                break
+
+        if not language_detected:
+            continue
+
+        # 2. Detect package manager (lockfile priority)
+        for pm_name, pm_cfg in lang_cfg["package_managers"].items():
+            lock_files = pm_cfg.get("lock_files", [])
+
+            if not lock_files:
+                return json.dumps(
+                    {
+                        "language": language,
+                        "package_manager": pm_name,
+                        "build_command": pm_cfg.get("build"),
+                        "outdated_command": pm_cfg.get("outdated_cmd"),
+                    }
+                )
+
+            for lock in lock_files:
+                if lock in repo_files:
+                    return json.dumps(
+                        {
+                            "language": language,
+                            "package_manager": pm_name,
+                            "build_command": pm_cfg.get("build"),
+                            "outdated_command": pm_cfg.get("outdated_cmd"),
+                        }
+                    )
+
+        # 3. Fallback to first package manager
+        pm_name, pm_cfg = next(iter(lang_cfg["package_managers"].items()))
+        return json.dumps(
+            {
+                "language": language,
+                "package_manager": pm_name,
+                "build_command": pm_cfg.get("build"),
+                "outdated_command": pm_cfg.get("outdated_cmd"),
+            }
+        )
+
+    return json.dumps(
+        {
+            "language": None,
+            "package_manager": None,
+            "build_command": None,
+            "outdated_command": None,
+        }
+    )
+
+
+@tool
+def read_dependency_file(repo_path: str, file_path: str) -> str:
+    """
+    Read the contents of a dependency file.
+
+    Args:
+        repo_path: Path to the repository
+        file_path: Relative path to the dependency file
+
+    Returns:
+        File contents
+    """
+    try:
+        full_path = os.path.join(repo_path, file_path)
+        with open(full_path, "r") as f:
+            content = f.read()
+        return content
+    except Exception as e:
+        return f"Error reading file: {str(e)}"
+
+
+@tool
+def check_outdated_dependencies(
+    repo_path: str, repo_url: str = "", detected_info: dict = None
+) -> str:
+    """
+    Check outdated dependencies for a repo using the previously detected package manager.
+
+    Args:
+        repo_path: Path to the repository
+        repo_url: Repository URL for caching (optional)
+        detected_info: Dict returned from detect_repo_build_info_json function
+                       Should contain: language, package_manager, outdated_command
+
+    Returns:
+        JSON string with outdated packages info
+    """
+    if not detected_info:
+        return json.dumps({"status": "error", "message": "Detected info not provided"})
+
+    outdated_cmd = detected_info.get("outdated_command")
+    package_manager = detected_info.get("package_manager")
+    language = detected_info.get("language")
+
+    if not outdated_cmd:
+        return json.dumps(
+            {
+                "status": "error",
+                "message": f"No outdated command defined for {package_manager}",
+            }
+        )
+
+    repo_path = Path(repo_path).resolve()
+    original_dir = os.getcwd()
+    os.chdir(repo_path)
+
+    try:
+        # Check cache if repo_url provided
+        cache = get_cache()
+
+        # Run outdated command
+        result = subprocess.run(
+            outdated_cmd.split(), capture_output=True, text=True, timeout=120
+        )
+
+        stdout = result.stdout.strip()
+        outdated_list = []
+
+        if stdout:
+            try:
+                data = json.loads(stdout)
+                # Standardize JSON output for common managers
+                if package_manager in ["npm", "yarn", "pnpm"]:
+                    for pkg, info in data.items():
+                        outdated_list.append(
+                            {
+                                "name": pkg,
+                                "current": info.get("current", "N/A"),
+                                "wanted": info.get("wanted", "N/A"),
+                                "latest": info.get("latest", "N/A"),
+                                "location": info.get("location", "N/A"),
+                            }
+                        )
+                elif package_manager in ["pip", "pipenv", "poetry"]:
+                    for pkg, info in data.items():
+                        outdated_list.append(
+                            {
+                                "name": pkg,
+                                "current": info.get("version", "N/A"),
+                                "latest": info.get("latest_version", "N/A"),
+                            }
+                        )
+                else:
+                    outdated_list.append({"raw_output": stdout})
+            except json.JSONDecodeError:
+                outdated_list.append({"raw_output": stdout})
+
+        result_data = {
+            "status": "success",
+            "language": language,
+            "package_manager": package_manager,
+            "outdated_count": len(outdated_list),
+            "outdated_packages": outdated_list,
+            "from_cache": False,
+        }
+
+        # Cache results if repo_url provided
+        if repo_url:
+            try:
+                cache.cache_outdated(repo_url, result_data)
+            except Exception:
+                pass  # ignore caching errors
+
+        return json.dumps(result_data, indent=2)
+
+    except subprocess.TimeoutExpired:
+        return json.dumps({"status": "error", "message": "Outdated command timed out"})
+    except Exception as e:
+        return json.dumps(
+            {
+                "status": "error",
+                "message": f"Error checking outdated dependencies: {str(e)}",
+            }
+        )
+    finally:
+        os.chdir(original_dir)
+
+
+@tool
+def cleanup_repository(repo_path: str) -> str:
+    """
+    Clean up the cloned repository.
+
+    Args:
+        repo_path: Path to the repository to remove
+
+    Returns:
+        Confirmation message
+    """
+    try:
+        if os.path.exists(repo_path) and (
+            repo_path.startswith("/tmp/dep_analyzer_")
+            or repo_path.startswith("/tmp/repo_check_")
+        ):
+            shutil.rmtree(repo_path)
+            return json.dumps(
+                {"status": "success", "message": f"Cleaned up {repo_path}"}
+            )
+        return json.dumps(
+            {"status": "error", "message": "Invalid path or path doesn't exist"}
+        )
+    except Exception as e:
+        return json.dumps(
+            {"status": "error", "message": f"Error during cleanup: {str(e)}"}
+        )
+
+
+def create_dependency_analyzer_agent():
+    """
+    Create the dependency analyzer agent.
+    """
+    tools = [
+        clone_repository,
+        detect_package_manager,
+        read_dependency_file,
+        check_outdated_dependencies,
+    ]
+
+    system_message = """You are a dependency analysis agent. Your job: clone a repo, detect its package manager, and check for outdated dependencies.
+
+Execute these steps IN ORDER. Do NOT skip steps or add extra steps.
+
+STEP 1: Clone the repository using clone_repository.
+STEP 2: Detect the package manager using detect_package_manager with the repo_path from step 1.
+STEP 3: Check outdated dependencies using check_outdated_dependencies with the repo_path and detected_info from step 2.
+STEP 4: Return a SHORT JSON summary. Do NOT write a long report.
+
+IMPORTANT RULES:
+- Do NOT clean up or delete the repository. It will be used by the next agent.
+- Do NOT call read_dependency_file unless check_outdated_dependencies fails.
+- Keep ALL your text responses under 50 words. No explanations, no analysis, no commentary.
+- Your final response MUST be ONLY this JSON and nothing else:
+{"repo_path": "...", "package_manager": "...", "outdated_count": N, "outdated_packages": [...]}"""
+
+    llm = ChatAnthropic(model="claude-sonnet-4-5-20250929", temperature=0)
+
+    agent_executor = create_agent(llm, tools, system_prompt=system_message)
+
+    return agent_executor

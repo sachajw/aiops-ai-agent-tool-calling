@@ -22,10 +22,7 @@ from unittest.mock import patch
 
 import pytest
 
-import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from repository_cache import RepositoryCache, get_cache
+from src.services.cache import RepositoryCache, get_cache
 
 
 class TestRepositoryCache:
@@ -126,7 +123,7 @@ class TestRepositoryCache:
         analysis_data = {
             "package_manager": "npm",
             "dependencies": ["react", "lodash"],
-            "outdated_count": 2
+            "outdated_count": 2,
         }
 
         cache.cache_analysis(repo_url, analysis_data)
@@ -150,7 +147,7 @@ class TestRepositoryCache:
             "package_manager": "npm",
             "outdated_packages": [
                 {"name": "react", "current": "17.0.0", "latest": "18.0.0"}
-            ]
+            ],
         }
 
         cache.cache_outdated(repo_url, outdated_data)

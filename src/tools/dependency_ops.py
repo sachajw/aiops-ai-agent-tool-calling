@@ -6,15 +6,18 @@ Dependency Operations - Helper tools for updating and rolling back dependencies
 import json
 import re
 from typing import Dict, List, Optional, Tuple
-from langchain_core.tools import tool
-from langchain_anthropic import ChatAnthropic
+
 from dotenv import load_dotenv
+from langchain_anthropic import ChatAnthropic
+from langchain_core.tools import tool
 
 load_dotenv()
 
 
 @tool
-def apply_all_updates(current_content: str, outdated_packages: str, file_type: str) -> str:
+def apply_all_updates(
+    current_content: str, outdated_packages: str, file_type: str
+) -> str:
     """
     Apply all dependency updates (including major versions) to a dependency file.
 
@@ -52,17 +55,19 @@ def apply_all_updates(current_content: str, outdated_packages: str, file_type: s
                                 prefix = ">="
 
                             package_data[section][pkg_name] = f"{prefix}{new_version}"
-                            applied_updates.append({
-                                "name": pkg_name,
-                                "old": update.get("current", old_version),
-                                "new": new_version,
-                                "section": section
-                            })
+                            applied_updates.append(
+                                {
+                                    "name": pkg_name,
+                                    "old": update.get("current", old_version),
+                                    "new": new_version,
+                                    "section": section,
+                                }
+                            )
 
             updated_content = json.dumps(package_data, indent=2)
 
         elif file_type == "requirements.txt":
-            lines = current_content.split('\n')
+            lines = current_content.split("\n")
             updated_lines = []
             updates_dict = {u["name"].lower(): u for u in updates}
 
@@ -70,18 +75,18 @@ def apply_all_updates(current_content: str, outdated_packages: str, file_type: s
                 stripped = line.strip()
 
                 # Keep comments and empty lines
-                if not stripped or stripped.startswith('#'):
+                if not stripped or stripped.startswith("#"):
                     updated_lines.append(line)
                     continue
 
                 # Parse package name
                 pkg_name = None
-                if '==' in stripped:
-                    pkg_name = stripped.split('==')[0].strip()
-                elif '>=' in stripped:
-                    pkg_name = stripped.split('>=')[0].strip()
-                elif '<=' in stripped:
-                    pkg_name = stripped.split('<=')[0].strip()
+                if "==" in stripped:
+                    pkg_name = stripped.split("==")[0].strip()
+                elif ">=" in stripped:
+                    pkg_name = stripped.split(">=")[0].strip()
+                elif "<=" in stripped:
+                    pkg_name = stripped.split("<=")[0].strip()
                 else:
                     pkg_name = stripped
 
@@ -90,69 +95,80 @@ def apply_all_updates(current_content: str, outdated_packages: str, file_type: s
                     update_info = updates_dict[pkg_name.lower()]
                     new_version = update_info["latest"]
                     updated_lines.append(f"{pkg_name}=={new_version}")
-                    applied_updates.append({
-                        "name": pkg_name,
-                        "old": update_info.get("current", "unknown"),
-                        "new": new_version
-                    })
+                    applied_updates.append(
+                        {
+                            "name": pkg_name,
+                            "old": update_info.get("current", "unknown"),
+                            "new": new_version,
+                        }
+                    )
                 else:
                     updated_lines.append(line)
 
-            updated_content = '\n'.join(updated_lines)
+            updated_content = "\n".join(updated_lines)
 
         elif file_type == "Cargo.toml":
-            lines = current_content.split('\n')
+            lines = current_content.split("\n")
             updated_lines = []
             updates_dict = {u["name"].lower(): u for u in updates}
             in_dependencies = False
 
             for line in lines:
                 # Track if we're in dependencies section
-                if line.strip().startswith('['):
-                    in_dependencies = 'dependencies' in line.lower()
+                if line.strip().startswith("["):
+                    in_dependencies = "dependencies" in line.lower()
 
                 # Try to update version
-                if in_dependencies and '=' in line and not line.strip().startswith('#'):
-                    match = re.match(r'(\s*)([a-zA-Z0-9_-]+)\s*=\s*["\']([^"\']+)["\']', line)
+                if in_dependencies and "=" in line and not line.strip().startswith("#"):
+                    match = re.match(
+                        r'(\s*)([a-zA-Z0-9_-]+)\s*=\s*["\']([^"\']+)["\']', line
+                    )
                     if match:
                         indent, pkg_name, current_version = match.groups()
                         if pkg_name.lower() in updates_dict:
                             update_info = updates_dict[pkg_name.lower()]
                             new_version = update_info["latest"]
-                            updated_lines.append(f'{indent}{pkg_name} = "{new_version}"')
-                            applied_updates.append({
-                                "name": pkg_name,
-                                "old": current_version,
-                                "new": new_version
-                            })
+                            updated_lines.append(
+                                f'{indent}{pkg_name} = "{new_version}"'
+                            )
+                            applied_updates.append(
+                                {
+                                    "name": pkg_name,
+                                    "old": current_version,
+                                    "new": new_version,
+                                }
+                            )
                             continue
 
                 updated_lines.append(line)
 
-            updated_content = '\n'.join(updated_lines)
+            updated_content = "\n".join(updated_lines)
 
         else:
-            return json.dumps({
-                "status": "error",
-                "message": f"Unsupported file type: {file_type}"
-            })
+            return json.dumps(
+                {"status": "error", "message": f"Unsupported file type: {file_type}"}
+            )
 
-        return json.dumps({
-            "status": "success",
-            "updated_content": updated_content,
-            "applied_updates": applied_updates,
-            "total_updates": len(applied_updates)
-        }, indent=2)
+        return json.dumps(
+            {
+                "status": "success",
+                "updated_content": updated_content,
+                "applied_updates": applied_updates,
+                "total_updates": len(applied_updates),
+            },
+            indent=2,
+        )
 
     except Exception as e:
-        return json.dumps({
-            "status": "error",
-            "message": f"Error applying updates: {str(e)}"
-        })
+        return json.dumps(
+            {"status": "error", "message": f"Error applying updates: {str(e)}"}
+        )
 
 
 @tool
-def rollback_major_update(current_content: str, package_name: str, file_type: str, target_version: str) -> str:
+def rollback_major_update(
+    current_content: str, package_name: str, file_type: str, target_version: str
+) -> str:
     """
     Rollback a specific package's major version update.
 
@@ -184,59 +200,65 @@ def rollback_major_update(current_content: str, package_name: str, file_type: st
             updated_content = json.dumps(package_data, indent=2)
 
         elif file_type == "requirements.txt":
-            lines = current_content.split('\n')
+            lines = current_content.split("\n")
             updated_lines = []
 
             for line in lines:
                 stripped = line.strip()
 
-                if not stripped or stripped.startswith('#'):
+                if not stripped or stripped.startswith("#"):
                     updated_lines.append(line)
                     continue
 
                 # Check if this is the package to rollback
-                if '==' in stripped:
-                    pkg_name = stripped.split('==')[0].strip()
+                if "==" in stripped:
+                    pkg_name = stripped.split("==")[0].strip()
                     if pkg_name.lower() == package_name.lower():
                         updated_lines.append(f"{pkg_name}=={target_version}")
                         continue
 
                 updated_lines.append(line)
 
-            updated_content = '\n'.join(updated_lines)
+            updated_content = "\n".join(updated_lines)
 
         elif file_type == "Cargo.toml":
-            lines = current_content.split('\n')
+            lines = current_content.split("\n")
             updated_lines = []
 
             for line in lines:
-                match = re.match(r'(\s*)(' + re.escape(package_name) + r')\s*=\s*["\']([^"\']+)["\']', line)
+                match = re.match(
+                    r"(\s*)("
+                    + re.escape(package_name)
+                    + r')\s*=\s*["\']([^"\']+)["\']',
+                    line,
+                )
                 if match:
                     indent, pkg_name, _ = match.groups()
                     updated_lines.append(f'{indent}{pkg_name} = "{target_version}"')
                 else:
                     updated_lines.append(line)
 
-            updated_content = '\n'.join(updated_lines)
+            updated_content = "\n".join(updated_lines)
 
         else:
-            return json.dumps({
-                "status": "error",
-                "message": f"Unsupported file type: {file_type}"
-            })
+            return json.dumps(
+                {"status": "error", "message": f"Unsupported file type: {file_type}"}
+            )
 
-        return json.dumps({
-            "status": "success",
-            "updated_content": updated_content,
-            "package": package_name,
-            "rolled_back_to": target_version
-        }, indent=2)
+        return json.dumps(
+            {
+                "status": "success",
+                "updated_content": updated_content,
+                "package": package_name,
+                "rolled_back_to": target_version,
+            },
+            indent=2,
+        )
 
     except Exception as e:
-        return json.dumps({
-            "status": "error",
-            "message": f"Error rolling back: {str(e)}"
-        })
+        return json.dumps(
+            {"status": "error", "message": f"Error rolling back: {str(e)}"}
+        )
 
 
 @tool
@@ -257,10 +279,7 @@ def parse_error_for_dependency(error_output: str, updated_packages: str) -> str:
         package_names = [p["name"] for p in packages]
 
         # Use LLM to analyze the error
-        llm = ChatAnthropic(
-            model="claude-sonnet-4-5-20250929",
-            temperature=0
-        )
+        llm = ChatAnthropic(model="claude-sonnet-4-5-20250929", temperature=0)
 
         prompt = f"""Analyze this error output from a build/test command and identify which dependency likely caused the failure.
 
@@ -288,42 +307,46 @@ Return ONLY a JSON object with this structure:
         content = result.content
 
         # Try to extract JSON from the response
-        json_match = re.search(r'\{.*\}', content, re.DOTALL)
+        json_match = re.search(r"\{.*\}", content, re.DOTALL)
         if json_match:
             parsed_result = json.loads(json_match.group())
-            return json.dumps({
-                "status": "success",
-                "analysis": parsed_result
-            }, indent=2)
+            return json.dumps(
+                {"status": "success", "analysis": parsed_result}, indent=2
+            )
         else:
             # Fallback: simple keyword matching
             for package in package_names:
                 if package.lower() in error_output.lower():
-                    return json.dumps({
-                        "status": "success",
-                        "analysis": {
-                            "suspected_package": package,
-                            "confidence": "medium",
-                            "reasoning": f"Package name '{package}' found in error output",
-                            "error_type": "unknown"
-                        }
-                    }, indent=2)
+                    return json.dumps(
+                        {
+                            "status": "success",
+                            "analysis": {
+                                "suspected_package": package,
+                                "confidence": "medium",
+                                "reasoning": f"Package name '{package}' found in error output",
+                                "error_type": "unknown",
+                            },
+                        },
+                        indent=2,
+                    )
 
-            return json.dumps({
-                "status": "success",
-                "analysis": {
-                    "suspected_package": None,
-                    "confidence": "low",
-                    "reasoning": "Could not identify specific package from error output",
-                    "error_type": "unknown"
-                }
-            }, indent=2)
+            return json.dumps(
+                {
+                    "status": "success",
+                    "analysis": {
+                        "suspected_package": None,
+                        "confidence": "low",
+                        "reasoning": "Could not identify specific package from error output",
+                        "error_type": "unknown",
+                    },
+                },
+                indent=2,
+            )
 
     except Exception as e:
-        return json.dumps({
-            "status": "error",
-            "message": f"Error parsing error output: {str(e)}"
-        })
+        return json.dumps(
+            {"status": "error", "message": f"Error parsing error output: {str(e)}"}
+        )
 
 
 @tool
@@ -338,25 +361,47 @@ def categorize_updates(outdated_packages: str) -> str:
         JSON with categorized updates
     """
     try:
-        packages = json.loads(outdated_packages)
+        parsed = json.loads(outdated_packages)
+
+        # Handle wrapped formats: {"outdated_dependencies": [...]} or {"packages": [...]}
+        if isinstance(parsed, dict):
+            for key in ["outdated_dependencies", "outdated_packages", "packages"]:
+                if key in parsed and isinstance(parsed[key], list):
+                    parsed = parsed[key]
+                    break
+            else:
+                # If it's a dict with no known list key, wrap in a list
+                if "name" in parsed:
+                    parsed = [parsed]
+                else:
+                    parsed = []
+
+        packages = parsed
 
         major_updates = []
         minor_updates = []
         patch_updates = []
 
         for pkg in packages:
-            name = pkg["name"]
-            current = pkg.get("current", "0.0.0").lstrip('^~>=')
-            latest = pkg.get("latest", "0.0.0")
+            name = pkg.get("name", "unknown")
+            # Accept both "current"/"latest" and "current_version"/"latest_version"
+            current = pkg.get("current", pkg.get("current_version", "0.0.0"))
+            latest = pkg.get("latest", pkg.get("latest_version", "0.0.0"))
+            current = current.lstrip("^~>=v")
+            latest = latest.lstrip("^~>=v")
 
             try:
-                curr_parts = current.split('.')
-                latest_parts = latest.split('.')
+                curr_parts = current.split(".")
+                latest_parts = latest.split(".")
 
                 if len(curr_parts) >= 1 and len(latest_parts) >= 1:
                     if curr_parts[0] != latest_parts[0]:
                         major_updates.append(pkg)
-                    elif len(curr_parts) >= 2 and len(latest_parts) >= 2 and curr_parts[1] != latest_parts[1]:
+                    elif (
+                        len(curr_parts) >= 2
+                        and len(latest_parts) >= 2
+                        and curr_parts[1] != latest_parts[1]
+                    ):
                         minor_updates.append(pkg)
                     else:
                         patch_updates.append(pkg)
@@ -365,27 +410,31 @@ def categorize_updates(outdated_packages: str) -> str:
             except:
                 minor_updates.append(pkg)
 
-        return json.dumps({
-            "status": "success",
-            "major": major_updates,
-            "minor": minor_updates,
-            "patch": patch_updates,
-            "counts": {
-                "major": len(major_updates),
-                "minor": len(minor_updates),
-                "patch": len(patch_updates)
-            }
-        }, indent=2)
+        return json.dumps(
+            {
+                "status": "success",
+                "major": major_updates,
+                "minor": minor_updates,
+                "patch": patch_updates,
+                "counts": {
+                    "major": len(major_updates),
+                    "minor": len(minor_updates),
+                    "patch": len(patch_updates),
+                },
+            },
+            indent=2,
+        )
 
     except Exception as e:
-        return json.dumps({
-            "status": "error",
-            "message": f"Error categorizing updates: {str(e)}"
-        })
+        return json.dumps(
+            {"status": "error", "message": f"Error categorizing updates: {str(e)}"}
+        )
 
 
 @tool
-def get_latest_version_for_major(package_name: str, major_version: str, package_manager: str) -> str:
+def get_latest_version_for_major(
+    package_name: str, major_version: str, package_manager: str
+) -> str:
     """
     Get the latest version within a specific major version.
 
@@ -405,7 +454,7 @@ def get_latest_version_for_major(package_name: str, major_version: str, package_
                 ["npm", "view", package_name, "versions", "--json"],
                 capture_output=True,
                 text=True,
-                timeout=30
+                timeout=30,
             )
 
             if result.returncode == 0:
@@ -415,28 +464,30 @@ def get_latest_version_for_major(package_name: str, major_version: str, package_
 
                 # Filter for major version
                 matching_versions = [
-                    v for v in versions
-                    if v.split('.')[0] == major_version
+                    v for v in versions if v.split(".")[0] == major_version
                 ]
 
                 if matching_versions:
                     # Get the latest
                     latest = matching_versions[-1]
-                    return json.dumps({
-                        "status": "success",
-                        "package": package_name,
-                        "major_version": major_version,
-                        "latest_in_major": latest
-                    })
+                    return json.dumps(
+                        {
+                            "status": "success",
+                            "package": package_name,
+                            "major_version": major_version,
+                            "latest_in_major": latest,
+                        }
+                    )
 
         # Fallback or other package managers
-        return json.dumps({
-            "status": "error",
-            "message": f"Could not find latest version for {package_name} major {major_version}"
-        })
+        return json.dumps(
+            {
+                "status": "error",
+                "message": f"Could not find latest version for {package_name} major {major_version}",
+            }
+        )
 
     except Exception as e:
-        return json.dumps({
-            "status": "error",
-            "message": f"Error getting version info: {str(e)}"
-        })
+        return json.dumps(
+            {"status": "error", "message": f"Error getting version info: {str(e)}"}
+        )

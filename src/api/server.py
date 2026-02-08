@@ -3,47 +3,18 @@ FastAPI web server for dependency update automation.
 Exposes REST endpoints to analyze and update repository dependencies.
 """
 
-import os
 import asyncio
+import os
 import subprocess
-import shutil
-from typing import Optional, Dict, Any
 from contextlib import asynccontextmanager
+from typing import Any, Dict, Optional
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks
-from pydantic import BaseModel, Field
 from dotenv import load_dotenv
+from fastapi import BackgroundTasks, FastAPI, HTTPException
+from pydantic import BaseModel, Field
 
-
-def get_docker_path():
-    """Get the absolute path to the docker executable.
-
-    Using absolute paths prevents PyCharm debugger issues where it
-    tries to check if 'docker' is a Python script.
-    """
-    docker_path = shutil.which("docker")
-    if docker_path:
-        return docker_path
-
-    # Common Docker paths on different systems
-    common_paths = [
-        "/usr/local/bin/docker",
-        "/usr/bin/docker",
-        "/opt/homebrew/bin/docker",
-        "/Applications/Docker.app/Contents/Resources/bin/docker",
-    ]
-
-    for path in common_paths:
-        if os.path.isfile(path) and os.access(path, os.X_OK):
-            return path
-
-    return "docker"  # Fallback to PATH lookup
-
-from auto_update_dependencies import (
-    create_main_orchestrator,
-    validate_prerequisites
-)
-
+from src.agents.orchestrator import create_main_orchestrator, validate_prerequisites
+from src.utils.docker import get_docker_path
 
 # Load environment variables
 load_dotenv()
@@ -51,19 +22,21 @@ load_dotenv()
 
 class RepositoryRequest(BaseModel):
     """Request model for repository operations"""
+
     repository: str = Field(
         ...,
         description="Repository in format 'owner/repo' or full GitHub URL",
-        example="facebook/react"
+        example="facebook/react",
     )
     github_token: Optional[str] = Field(
         None,
-        description="GitHub Personal Access Token (optional, uses env var if not provided)"
+        description="GitHub Personal Access Token (optional, uses env var if not provided)",
     )
 
 
 class JobResponse(BaseModel):
     """Response model for job submissions"""
+
     job_id: str
     status: str
     message: str
@@ -72,6 +45,7 @@ class JobResponse(BaseModel):
 
 class JobStatusResponse(BaseModel):
     """Response model for job status"""
+
     job_id: str
     status: str
     result: Optional[Dict[str, Any]] = None
@@ -87,100 +61,64 @@ async def start_persistent_mcp_server():
     Start the persistent MCP server.
     This keeps the MCP container running for the lifetime of the API server.
     """
-    from mcp_server_manager import start_mcp_server, get_mcp_status
+    from src.integrations.mcp_server_manager import get_mcp_status, start_mcp_server
 
-    print("🔌 Starting persistent MCP server...")
     success = await start_mcp_server()
 
-    if success:
+    if not success:
         status = await get_mcp_status()
-        print(f"  ✓ Persistent MCP server running - {status.tools_count} tools available")
-        if status.container_id:
-            print(f"  ✓ Container ID: {status.container_id[:12]}")
-    else:
-        status = await get_mcp_status()
-        print(f"  ⚠️  Failed to start persistent MCP server: {status.error_message}")
+        print(f"  Failed to start persistent MCP server: {status.error_message}")
 
     return success
 
 
 async def stop_persistent_mcp_server():
     """Stop the persistent MCP server on shutdown."""
-    from mcp_server_manager import stop_mcp_server
+    from src.integrations.mcp_server_manager import stop_mcp_server
 
-    print("🛑 Stopping persistent MCP server...")
+    print("Stopping persistent MCP server...")
     await stop_mcp_server()
-    print("  ✓ Persistent MCP server stopped")
+    print("  Persistent MCP server stopped")
 
 
 async def setup_github_mcp_docker():
     """
-    Pull and verify GitHub MCP Docker image on startup.
-    This ensures the image is ready when endpoints are called.
+    Verify Docker is available and start the persistent MCP server.
+    Image pulling is handled by startup.py's pull_mcp_image().
     """
-    print("🐳 Setting up GitHub MCP Docker image...")
+    print("Setting up GitHub MCP Docker image...")
     docker_cmd = get_docker_path()
 
     try:
         # Check if Docker is available
         result = subprocess.run(
-            [docker_cmd, "--version"],
-            capture_output=True,
-            text=True,
-            timeout=10
+            [docker_cmd, "--version"], capture_output=True, text=True, timeout=10
         )
 
         if result.returncode != 0:
             raise RuntimeError("Docker is not available")
 
-        print(f"✓ Docker found: {result.stdout.strip()}")
+        print(f"Docker found: {result.stdout.strip()}")
 
-        # Pull the GitHub MCP server image
-        print("📥 Pulling GitHub MCP server image (this may take a moment)...")
-        pull_result = subprocess.run(
-            [docker_cmd, "pull", "ghcr.io/github/github-mcp-server"],
-            capture_output=True,
-            text=True,
-            timeout=300  # 5 minutes timeout for pulling
-        )
-
-        if pull_result.returncode != 0:
-            print(f"⚠️  Warning: Could not pull image: {pull_result.stderr}")
-            print("Will attempt to use cached image if available")
-        else:
-            print("✓ GitHub MCP server image pulled successfully")
-
-        # Verify the image exists
+        # Verify the image exists locally
         verify_result = subprocess.run(
             [docker_cmd, "images", "ghcr.io/github/github-mcp-server", "-q"],
             capture_output=True,
             text=True,
-            timeout=10
+            timeout=10,
         )
 
         if not verify_result.stdout.strip():
-            raise RuntimeError("GitHub MCP server image not available")
+            raise RuntimeError(
+                "GitHub MCP server image not available. Run startup with --skip-checks disabled to pull it."
+            )
 
-        print("✓ GitHub MCP server image verified")
-
-        # Test that the MCP server can start (quick validation)
-        print("🔍 Validating MCP server can start...")
-        test_result = subprocess.run(
-            [docker_cmd, "run", "--rm", "ghcr.io/github/github-mcp-server", "--help"],
-            capture_output=True,
-            text=True,
-            timeout=30
-        )
-
-        if test_result.returncode == 0:
-            print("✓ MCP server container validated")
-        else:
-            print("⚠️  MCP server validation returned non-zero (may still work)")
+        print("GitHub MCP server image verified")
 
         # Start the persistent MCP server (keeps running until shutdown)
         await start_persistent_mcp_server()
 
-        print("✅ GitHub MCP setup complete")
+        print("GitHub MCP setup complete")
 
     except subprocess.TimeoutExpired:
         raise RuntimeError("Docker command timed out")
@@ -195,19 +133,19 @@ async def lifespan(app: FastAPI):
     Sets up GitHub MCP Docker on startup and cleans up on shutdown.
     """
     # Startup
-    print("🚀 Starting Dependency Update API Server...")
+    print("Starting Dependency Update API Server...")
 
     try:
         await setup_github_mcp_docker()
-        print("✅ Server ready to accept requests")
+        print("Server ready to accept requests")
     except Exception as e:
-        print(f"❌ Startup failed: {str(e)}")
-        print("⚠️  Server will start but may not function correctly")
+        print(f"Startup failed: {str(e)}")
+        print("Server will start but may not function correctly")
 
     yield
 
     # Shutdown
-    print("👋 Shutting down server...")
+    print("Shutting down server...")
     await stop_persistent_mcp_server()
 
 
@@ -216,14 +154,12 @@ app = FastAPI(
     title="Dependency Update Automation API",
     description="Automatically analyze and update repository dependencies with intelligent testing and rollback",
     version="1.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
 )
 
 
 async def process_repository_update(
-    job_id: str,
-    repository: str,
-    github_token: Optional[str] = None
+    job_id: str, repository: str, github_token: Optional[str] = None
 ):
     """
     Background task to process repository updates.
@@ -254,24 +190,49 @@ async def process_repository_update(
         print(f"[Job {job_id}] Creating orchestrator agent...")
         agent = create_main_orchestrator()
 
-        # Run the update process
+        # Run the update process with activity logging
+        from src.callbacks.agent_activity import AgentActivityHandler
+
+        handler = AgentActivityHandler("orchestrator", job_id=job_id)
         print(f"[Job {job_id}] Processing repository: {repository}")
 
-        result = agent.invoke({
-            "messages": [("user", f"Analyze and update dependencies for repository: {repository}")]
-        })
+        # Run agent.invoke() in a thread so it doesn't block the event loop.
+        # This is critical: MCP tool calls use run_coroutine_threadsafe() to
+        # schedule async MCP operations back on this event loop. If the loop
+        # is blocked by agent.invoke(), it deadlocks.
+        import asyncio
+
+        from src.agents.updater import set_main_event_loop
+
+        loop = asyncio.get_running_loop()
+        set_main_event_loop(loop)
+        result = await loop.run_in_executor(
+            None,
+            lambda: agent.invoke(
+                {
+                    "messages": [
+                        (
+                            "user",
+                            f"Analyze and update dependencies for repository: {repository}",
+                        )
+                    ]
+                },
+                config={"callbacks": [handler]},
+            ),
+        )
 
         # Update job with results
         jobs_storage[job_id]["status"] = "completed"
         jobs_storage[job_id]["result"] = {
             "output": result.get("output", ""),
-            "repository": repository
+            "repository": repository,
         }
+        jobs_storage[job_id]["activity_log"] = handler.activity_log
 
-        print(f"[Job {job_id}] ✅ Completed successfully")
+        print(f"[Job {job_id}] Completed successfully")
 
     except Exception as e:
-        print(f"[Job {job_id}] ❌ Failed: {str(e)}")
+        print(f"[Job {job_id}] Failed: {str(e)}")
         jobs_storage[job_id]["status"] = "failed"
         jobs_storage[job_id]["error"] = str(e)
 
@@ -282,7 +243,7 @@ async def root():
     return {
         "status": "online",
         "service": "Dependency Update Automation API",
-        "version": "1.0.0"
+        "version": "1.0.0",
     }
 
 
@@ -290,15 +251,12 @@ async def root():
 async def health_check():
     """Detailed health check including Docker and MCP server availability"""
     try:
-        from mcp_server_manager import get_mcp_status, MCPServerStatus
+        from src.integrations.mcp_server_manager import MCPServerStatus, get_mcp_status
 
         # Check Docker
         docker_cmd = get_docker_path()
         docker_check = subprocess.run(
-            [docker_cmd, "--version"],
-            capture_output=True,
-            text=True,
-            timeout=5
+            [docker_cmd, "--version"], capture_output=True, text=True, timeout=5
         )
         docker_available = docker_check.returncode == 0
 
@@ -314,7 +272,9 @@ async def health_check():
         mcp_status = await get_mcp_status()
         mcp_running = mcp_status.status == MCPServerStatus.RUNNING
 
-        all_healthy = all([docker_available, token_configured, api_key_configured, mcp_running])
+        all_healthy = all(
+            [docker_available, token_configured, api_key_configured, mcp_running]
+        )
 
         return {
             "status": "healthy" if all_healthy else "degraded",
@@ -325,31 +285,23 @@ async def health_check():
                 "mcp_server": {
                     "status": mcp_status.status.value,
                     "tools_count": mcp_status.tools_count,
-                    "container_id": mcp_status.container_id[:12] if mcp_status.container_id else None,
-                    "error": mcp_status.error_message
-                }
-            }
+                    "container_id": mcp_status.container_id[:12]
+                    if mcp_status.container_id
+                    else None,
+                    "error": mcp_status.error_message,
+                },
+            },
         }
     except Exception as e:
-        return {
-            "status": "unhealthy",
-            "error": str(e)
-        }
+        return {"status": "unhealthy", "error": str(e)}
 
 
 @app.get("/api/mcp/status")
 async def mcp_status():
     """
     Get detailed status of the persistent MCP server.
-
-    Returns information about:
-    - Server status (stopped, starting, running, error, reconnecting)
-    - Container ID if running
-    - Number of available tools
-    - Any error messages
-    - Reconnection attempts
     """
-    from mcp_server_manager import get_mcp_status
+    from src.integrations.mcp_server_manager import get_mcp_status
 
     status = await get_mcp_status()
 
@@ -358,7 +310,7 @@ async def mcp_status():
         "container_id": status.container_id,
         "tools_count": status.tools_count,
         "error_message": status.error_message,
-        "reconnect_attempts": status.reconnect_attempts
+        "reconnect_attempts": status.reconnect_attempts,
     }
 
 
@@ -366,35 +318,23 @@ async def mcp_status():
 async def mcp_tools():
     """
     List all available MCP tools.
-
-    Returns the list of GitHub MCP tools that can be used for
-    creating PRs, issues, and other GitHub operations.
     """
-    from mcp_server_manager import get_mcp_server
+    from src.integrations.mcp_server_manager import get_mcp_server
 
     server = await get_mcp_server()
 
     if not server.is_running:
-        raise HTTPException(
-            status_code=503,
-            detail="MCP server is not running"
-        )
+        raise HTTPException(status_code=503, detail="MCP server is not running")
 
-    return {
-        "tools_count": len(server.available_tools),
-        "tools": server.available_tools
-    }
+    return {"tools_count": len(server.available_tools), "tools": server.available_tools}
 
 
 @app.post("/api/mcp/reconnect")
 async def mcp_reconnect():
     """
     Force reconnection to the MCP server.
-
-    Use this endpoint if the MCP server connection has dropped
-    or is in an error state.
     """
-    from mcp_server_manager import get_mcp_server
+    from src.integrations.mcp_server_manager import get_mcp_server
 
     server = await get_mcp_server()
     success = await server.reconnect()
@@ -403,33 +343,26 @@ async def mcp_reconnect():
         return {
             "status": "success",
             "message": "MCP server reconnected successfully",
-            "tools_count": len(server.available_tools)
+            "tools_count": len(server.available_tools),
         }
     else:
         raise HTTPException(
-            status_code=503,
-            detail=f"Failed to reconnect: {server.info.error_message}"
+            status_code=503, detail=f"Failed to reconnect: {server.info.error_message}"
         )
 
 
 @app.post("/api/repositories/update", response_model=JobResponse)
 async def update_repository(
-    request: RepositoryRequest,
-    background_tasks: BackgroundTasks
+    request: RepositoryRequest, background_tasks: BackgroundTasks
 ):
     """
     Analyze and update dependencies for a repository.
-
-    This endpoint:
-    1. Clones the repository
-    2. Analyzes outdated dependencies
-    3. Updates and tests dependencies
-    4. Creates a PR if successful or an issue if it fails
 
     The process runs in the background and returns a job ID for status tracking.
     """
     # Generate job ID
     import uuid
+
     job_id = str(uuid.uuid4())
 
     # Initialize job
@@ -438,7 +371,7 @@ async def update_repository(
         "status": "queued",
         "repository": request.repository,
         "result": None,
-        "error": None
+        "error": None,
     }
 
     # Add to background tasks
@@ -446,14 +379,14 @@ async def update_repository(
         process_repository_update,
         job_id=job_id,
         repository=request.repository,
-        github_token=request.github_token
+        github_token=request.github_token,
     )
 
     return JobResponse(
         job_id=job_id,
         status="queued",
         message="Repository update job has been queued",
-        repository=request.repository
+        repository=request.repository,
     )
 
 
@@ -461,12 +394,6 @@ async def update_repository(
 async def get_job_status(job_id: str):
     """
     Get the status of a repository update job.
-
-    Possible statuses:
-    - queued: Job is waiting to be processed
-    - processing: Job is currently being processed
-    - completed: Job completed successfully
-    - failed: Job failed with an error
     """
     if job_id not in jobs_storage:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -477,17 +404,14 @@ async def get_job_status(job_id: str):
         job_id=job["job_id"],
         status=job["status"],
         result=job.get("result"),
-        error=job.get("error")
+        error=job.get("error"),
     )
 
 
 @app.get("/api/jobs")
 async def list_jobs():
     """List all jobs and their current status"""
-    return {
-        "total": len(jobs_storage),
-        "jobs": list(jobs_storage.values())
-    }
+    return {"total": len(jobs_storage), "jobs": list(jobs_storage.values())}
 
 
 if __name__ == "__main__":
@@ -497,12 +421,8 @@ if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))
     host = os.getenv("HOST", "0.0.0.0")
 
-    print(f"🚀 Starting server on {host}:{port}")
+    print(f"Starting server on {host}:{port}")
 
     uvicorn.run(
-        "api_server:app",
-        host=host,
-        port=port,
-        reload=True,
-        log_level="info"
+        "src.api.server:app", host=host, port=port, reload=True, log_level="info"
     )

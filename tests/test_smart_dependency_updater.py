@@ -9,22 +9,20 @@ git operations, and GitHub PR/Issue creation.
 import json
 import os
 import shutil
+import subprocess
 import tempfile
 from datetime import datetime
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from smart_dependency_updater import (
+from src.agents.updater import (
+    create_github_issue,
+    create_github_pr,
     detect_build_command,
+    git_operations,
     run_build_test,
     write_dependency_file,
-    git_operations,
-    create_github_pr,
-    create_github_issue
 )
 
 
@@ -43,11 +41,7 @@ class TestDetectBuildCommand:
         """Test detection of npm commands from package.json."""
         package_json = {
             "name": "test",
-            "scripts": {
-                "build": "webpack",
-                "test": "jest",
-                "lint": "eslint ."
-            }
+            "scripts": {"build": "webpack", "test": "jest", "lint": "eslint ."},
         }
         with open(os.path.join(temp_repo, "package.json"), "w") as f:
             json.dump(package_json, f)
@@ -194,10 +188,11 @@ class TestRunBuildTest:
         """Test running a successful command."""
         original_dir = os.getcwd()
 
-        result = json.loads(run_build_test.invoke({
-            "repo_path": temp_repo,
-            "command": "echo 'Hello World'"
-        }))
+        result = json.loads(
+            run_build_test.invoke(
+                {"repo_path": temp_repo, "command": "echo 'Hello World'"}
+            )
+        )
 
         assert result["status"] == "success"
         assert result["succeeded"] is True
@@ -208,10 +203,9 @@ class TestRunBuildTest:
 
     def test_run_failing_command(self, temp_repo):
         """Test running a failing command."""
-        result = json.loads(run_build_test.invoke({
-            "repo_path": temp_repo,
-            "command": "exit 1"
-        }))
+        result = json.loads(
+            run_build_test.invoke({"repo_path": temp_repo, "command": "exit 1"})
+        )
 
         assert result["status"] == "success"  # Tool succeeded, command failed
         assert result["succeeded"] is False
@@ -219,10 +213,14 @@ class TestRunBuildTest:
 
     def test_run_command_with_output(self, temp_repo):
         """Test command output capture."""
-        result = json.loads(run_build_test.invoke({
-            "repo_path": temp_repo,
-            "command": "echo 'stdout message' && echo 'stderr message' >&2"
-        }))
+        result = json.loads(
+            run_build_test.invoke(
+                {
+                    "repo_path": temp_repo,
+                    "command": "echo 'stdout message' && echo 'stderr message' >&2",
+                }
+            )
+        )
 
         assert result["status"] == "success"
         assert "stdout message" in result["stdout"]
@@ -230,11 +228,11 @@ class TestRunBuildTest:
 
     def test_run_command_timeout(self, temp_repo):
         """Test command timeout handling."""
-        result = json.loads(run_build_test.invoke({
-            "repo_path": temp_repo,
-            "command": "sleep 10",
-            "timeout": 1
-        }))
+        result = json.loads(
+            run_build_test.invoke(
+                {"repo_path": temp_repo, "command": "sleep 10", "timeout": 1}
+            )
+        )
 
         assert result["status"] == "error"
         assert "timed out" in result["message"]
@@ -243,11 +241,9 @@ class TestRunBuildTest:
         """Test that working directory is restored after timeout."""
         original_dir = os.getcwd()
 
-        run_build_test.invoke({
-            "repo_path": temp_repo,
-            "command": "sleep 10",
-            "timeout": 1
-        })
+        run_build_test.invoke(
+            {"repo_path": temp_repo, "command": "sleep 10", "timeout": 1}
+        )
 
         assert os.getcwd() == original_dir
 
@@ -256,10 +252,12 @@ class TestRunBuildTest:
         original_dir = os.getcwd()
 
         # Run a command that fails
-        run_build_test.invoke({
-            "repo_path": temp_repo,
-            "command": "false"  # Always fails
-        })
+        run_build_test.invoke(
+            {
+                "repo_path": temp_repo,
+                "command": "false",  # Always fails
+            }
+        )
 
         assert os.getcwd() == original_dir
 
@@ -279,11 +277,15 @@ class TestWriteDependencyFile:
         """Test writing package.json file."""
         content = json.dumps({"name": "test", "version": "1.0.0"}, indent=2)
 
-        result = json.loads(write_dependency_file.invoke({
-            "repo_path": temp_repo,
-            "file_name": "package.json",
-            "content": content
-        }))
+        result = json.loads(
+            write_dependency_file.invoke(
+                {
+                    "repo_path": temp_repo,
+                    "file_name": "package.json",
+                    "content": content,
+                }
+            )
+        )
 
         assert result["status"] == "success"
 
@@ -296,11 +298,15 @@ class TestWriteDependencyFile:
         """Test writing requirements.txt file."""
         content = "requests==2.31.0\nflask==3.0.0\n"
 
-        result = json.loads(write_dependency_file.invoke({
-            "repo_path": temp_repo,
-            "file_name": "requirements.txt",
-            "content": content
-        }))
+        result = json.loads(
+            write_dependency_file.invoke(
+                {
+                    "repo_path": temp_repo,
+                    "file_name": "requirements.txt",
+                    "content": content,
+                }
+            )
+        )
 
         assert result["status"] == "success"
 
@@ -314,11 +320,9 @@ class TestWriteDependencyFile:
         with open(file_path, "w") as f:
             f.write("old content")
 
-        write_dependency_file.invoke({
-            "repo_path": temp_repo,
-            "file_name": "test.txt",
-            "content": "new content"
-        })
+        write_dependency_file.invoke(
+            {"repo_path": temp_repo, "file_name": "test.txt", "content": "new content"}
+        )
 
         with open(file_path) as f:
             assert f.read() == "new content"
@@ -333,94 +337,157 @@ class TestGitOperations:
         temp_dir = tempfile.mkdtemp(prefix="test_git_")
         # Use subprocess for better error handling and compatibility
         import subprocess
+
         subprocess.run(["git", "init"], cwd=temp_dir, capture_output=True)
-        subprocess.run(["git", "checkout", "-b", "main"], cwd=temp_dir, capture_output=True)
-        subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=temp_dir, capture_output=True)
-        subprocess.run(["git", "config", "user.name", "Test User"], cwd=temp_dir, capture_output=True)
+        subprocess.run(
+            ["git", "checkout", "-b", "main"], cwd=temp_dir, capture_output=True
+        )
+        subprocess.run(
+            ["git", "config", "user.email", "test@test.com"],
+            cwd=temp_dir,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test User"],
+            cwd=temp_dir,
+            capture_output=True,
+        )
         # Disable GPG signing for test commits
-        subprocess.run(["git", "config", "commit.gpgsign", "false"], cwd=temp_dir, capture_output=True)
+        subprocess.run(
+            ["git", "config", "commit.gpgsign", "false"],
+            cwd=temp_dir,
+            capture_output=True,
+        )
 
         # Create initial commit
         with open(os.path.join(temp_dir, "README.md"), "w") as f:
             f.write("# Test")
         subprocess.run(["git", "add", "."], cwd=temp_dir, capture_output=True)
-        subprocess.run(["git", "commit", "--no-gpg-sign", "-m", "Initial commit"], cwd=temp_dir, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "--no-gpg-sign", "-m", "Initial commit"],
+            cwd=temp_dir,
+            capture_output=True,
+        )
 
         yield temp_dir
         if os.path.exists(temp_dir):
             shutil.rmtree(temp_dir)
 
-    def test_create_branch(self, git_repo):
-        """Test creating a new git branch."""
-        # Note: LangChain @tool with **kwargs doesn't pass extra args from invoke()
-        # So we test the default branch name behavior
-        result = json.loads(git_operations.invoke({
-            "repo_path": git_repo,
-            "operation": "create_branch"
-        }))
-
-        assert result["status"] == "success"
-        # Branch name includes timestamp by default
-        assert "deps/auto-update" in result["branch_name"]
-
-    def test_create_branch_default_name(self, git_repo):
-        """Test creating branch with default name."""
-        result = json.loads(git_operations.invoke({
-            "repo_path": git_repo,
-            "operation": "create_branch"
-        }))
-
-        assert result["status"] == "success"
-        assert "deps/auto-update" in result["branch_name"]
-
-    def test_commit_changes(self, git_repo):
-        """Test committing changes."""
-        import subprocess
-
-        # Check if GPG signing is enabled globally - skip if so
-        gpg_check = subprocess.run(
-            ["git", "config", "--global", "commit.gpgsign"],
+    @patch("src.agents.updater._run_mcp_call")
+    def test_create_branch(self, mock_run_mcp_call, git_repo):
+        """Test creating a new git branch via MCP."""
+        # Add a remote so get_remote_url works
+        subprocess.run(
+            ["git", "remote", "add", "origin", "https://github.com/test/repo.git"],
+            cwd=git_repo,
             capture_output=True,
-            text=True
         )
-        if gpg_check.stdout.strip() == "true":
-            pytest.skip("Skipping commit test - GPG signing enabled in environment")
+        mock_run_mcp_call.return_value = {"status": "success"}
 
-        # Make a change
-        with open(os.path.join(git_repo, "test.txt"), "w") as f:
-            f.write("test content")
+        result = json.loads(
+            git_operations.invoke({"repo_path": git_repo, "operation": "create_branch"})
+        )
 
-        # Stage the file first using subprocess (since git_operations stages with git add .)
-        subprocess.run(["git", "add", "."], cwd=git_repo, capture_output=True)
-
-        result = json.loads(git_operations.invoke({
-            "repo_path": git_repo,
-            "operation": "commit"
-        }))
-
-        # Note: message kwarg won't work due to @tool decorator limitation
-        # So we just check that the commit succeeded
         assert result["status"] == "success"
+        assert "deps/auto-update" in result["branch_name"]
+        mock_run_mcp_call.assert_called_once()
+
+    @patch("src.agents.updater._run_mcp_call")
+    def test_create_branch_default_name(self, mock_run_mcp_call, git_repo):
+        """Test creating branch with default name via MCP."""
+        subprocess.run(
+            ["git", "remote", "add", "origin", "https://github.com/test/repo.git"],
+            cwd=git_repo,
+            capture_output=True,
+        )
+        mock_run_mcp_call.return_value = {"status": "success"}
+
+        result = json.loads(
+            git_operations.invoke({"repo_path": git_repo, "operation": "create_branch"})
+        )
+
+        assert result["status"] == "success"
+        assert "deps/auto-update" in result["branch_name"]
+
+    @patch("src.agents.updater._run_mcp_call")
+    def test_push_files(self, mock_run_mcp_call, git_repo):
+        """Test pushing modified files via MCP."""
+        subprocess.run(
+            ["git", "remote", "add", "origin", "https://github.com/test/repo.git"],
+            cwd=git_repo,
+            capture_output=True,
+        )
+        mock_run_mcp_call.return_value = {"status": "success"}
+
+        # Make a change (untracked by git diff, but tracked as modified)
+        with open(os.path.join(git_repo, "README.md"), "w") as f:
+            f.write("# Updated")
+
+        result = json.loads(
+            git_operations.invoke(
+                {
+                    "repo_path": git_repo,
+                    "operation": "push_files",
+                    "kwargs": {
+                        "branch_name": "update-deps",
+                        "message": "chore: update deps",
+                    },
+                }
+            )
+        )
+
+        assert result["status"] == "success"
+        assert result["files_pushed"] >= 1
+        mock_run_mcp_call.assert_called_once()
+
+    @patch("src.agents.updater._run_mcp_call")
+    def test_push_files_no_changes(self, mock_run_mcp_call, git_repo):
+        """Test push_files when no files are modified."""
+        subprocess.run(
+            ["git", "remote", "add", "origin", "https://github.com/test/repo.git"],
+            cwd=git_repo,
+            capture_output=True,
+        )
+
+        result = json.loads(
+            git_operations.invoke(
+                {
+                    "repo_path": git_repo,
+                    "operation": "push_files",
+                    "kwargs": {
+                        "branch_name": "update-deps",
+                        "message": "chore: update deps",
+                    },
+                }
+            )
+        )
+
+        assert result["status"] == "no_changes"
+        mock_run_mcp_call.assert_not_called()
 
     def test_get_remote_url(self, git_repo):
         """Test getting remote URL."""
         # Add a remote
-        os.system(f"cd {git_repo} && git remote add origin https://github.com/test/repo.git")
+        os.system(
+            f"cd {git_repo} && git remote add origin https://github.com/test/repo.git"
+        )
 
-        result = json.loads(git_operations.invoke({
-            "repo_path": git_repo,
-            "operation": "get_remote_url"
-        }))
+        result = json.loads(
+            git_operations.invoke(
+                {"repo_path": git_repo, "operation": "get_remote_url"}
+            )
+        )
 
         assert result["status"] == "success"
         assert "test/repo" in result["repo_name"]
 
     def test_unknown_operation(self, git_repo):
         """Test handling of unknown operation."""
-        result = json.loads(git_operations.invoke({
-            "repo_path": git_repo,
-            "operation": "unknown_operation"
-        }))
+        result = json.loads(
+            git_operations.invoke(
+                {"repo_path": git_repo, "operation": "unknown_operation"}
+            )
+        )
 
         assert result["status"] == "error"
         assert "Unknown operation" in result["message"]
@@ -429,11 +496,7 @@ class TestGitOperations:
         """Test that working directory is restored after operations."""
         original_dir = os.getcwd()
 
-        git_operations.invoke({
-            "repo_path": git_repo,
-            "operation": "create_branch",
-            "branch_name": "test"
-        })
+        git_operations.invoke({"repo_path": git_repo, "operation": "get_remote_url"})
 
         assert os.getcwd() == original_dir
 
@@ -441,45 +504,51 @@ class TestGitOperations:
 class TestCreateGitHubPR:
     """Test cases for create_github_pr function."""
 
-    @patch("github_mcp_client.create_pr_sync")
-    def test_create_pr_success(self, mock_create_pr):
-        """Test successful PR creation."""
-        mock_create_pr.return_value = {
+    @patch("src.agents.updater._run_mcp_call")
+    def test_create_pr_success(self, mock_run_mcp_call):
+        """Test successful PR creation via persistent MCP."""
+        mock_run_mcp_call.return_value = {
             "status": "success",
-            "pr_url": "https://github.com/test/repo/pull/1",
-            "message": "PR created successfully"
+            "data": {"html_url": "https://github.com/test/repo/pull/1", "number": 1},
         }
 
-        # Import inside function to get fresh module
-        from smart_dependency_updater import create_github_pr as create_pr_func
+        from src.agents.updater import create_github_pr as create_pr_func
 
-        result = json.loads(create_pr_func.invoke({
-            "repo_name": "test/repo",
-            "branch_name": "feature-branch",
-            "title": "Update dependencies",
-            "body": "This PR updates dependencies",
-            "base_branch": "main"
-        }))
+        result = json.loads(
+            create_pr_func.invoke(
+                {
+                    "repo_name": "test/repo",
+                    "branch_name": "feature-branch",
+                    "title": "Update dependencies",
+                    "body": "This PR updates dependencies",
+                    "base_branch": "main",
+                }
+            )
+        )
 
         assert result["status"] == "success"
         assert "pr_url" in result
 
-    @patch("github_mcp_client.create_pr_sync")
-    def test_create_pr_failure(self, mock_create_pr):
+    @patch("src.agents.updater._run_mcp_call")
+    def test_create_pr_failure(self, mock_run_mcp_call):
         """Test PR creation failure."""
-        mock_create_pr.return_value = {
+        mock_run_mcp_call.return_value = {
             "status": "error",
-            "message": "Authentication failed"
+            "message": "Authentication failed",
         }
 
-        from smart_dependency_updater import create_github_pr as create_pr_func
+        from src.agents.updater import create_github_pr as create_pr_func
 
-        result = json.loads(create_pr_func.invoke({
-            "repo_name": "test/repo",
-            "branch_name": "feature-branch",
-            "title": "Update dependencies",
-            "body": "This PR updates dependencies"
-        }))
+        result = json.loads(
+            create_pr_func.invoke(
+                {
+                    "repo_name": "test/repo",
+                    "branch_name": "feature-branch",
+                    "title": "Update dependencies",
+                    "body": "This PR updates dependencies",
+                }
+            )
+        )
 
         assert result["status"] == "error"
 
@@ -487,42 +556,45 @@ class TestCreateGitHubPR:
 class TestCreateGitHubIssue:
     """Test cases for create_github_issue function."""
 
-    @patch("github_mcp_client.create_issue_sync")
-    def test_create_issue_success(self, mock_create_issue):
-        """Test successful issue creation."""
-        mock_create_issue.return_value = {
+    @patch("src.agents.updater._run_mcp_call")
+    def test_create_issue_success(self, mock_run_mcp_call):
+        """Test successful issue creation via persistent MCP."""
+        mock_run_mcp_call.return_value = {
             "status": "success",
-            "issue_url": "https://github.com/test/repo/issues/1",
-            "message": "Issue created successfully"
+            "data": {"html_url": "https://github.com/test/repo/issues/1", "number": 1},
         }
 
-        from smart_dependency_updater import create_github_issue as create_issue_func
+        from src.agents.updater import create_github_issue as create_issue_func
 
-        result = json.loads(create_issue_func.invoke({
-            "repo_name": "test/repo",
-            "title": "Dependency update failed",
-            "body": "Could not update dependencies",
-            "labels": "dependencies,bug"
-        }))
+        result = json.loads(
+            create_issue_func.invoke(
+                {
+                    "repo_name": "test/repo",
+                    "title": "Dependency update failed",
+                    "body": "Could not update dependencies",
+                    "labels": "dependencies,bug",
+                }
+            )
+        )
 
         assert result["status"] == "success"
         assert "issue_url" in result
 
-    @patch("github_mcp_client.create_issue_sync")
-    def test_create_issue_failure(self, mock_create_issue):
+    @patch("src.agents.updater._run_mcp_call")
+    def test_create_issue_failure(self, mock_run_mcp_call):
         """Test issue creation failure."""
-        mock_create_issue.return_value = {
+        mock_run_mcp_call.return_value = {
             "status": "error",
-            "message": "Repository not found"
+            "message": "Repository not found",
         }
 
-        from smart_dependency_updater import create_github_issue as create_issue_func
+        from src.agents.updater import create_github_issue as create_issue_func
 
-        result = json.loads(create_issue_func.invoke({
-            "repo_name": "test/repo",
-            "title": "Test issue",
-            "body": "Test body"
-        }))
+        result = json.loads(
+            create_issue_func.invoke(
+                {"repo_name": "test/repo", "title": "Test issue", "body": "Test body"}
+            )
+        )
 
         assert result["status"] == "error"
 

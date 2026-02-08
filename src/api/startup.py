@@ -8,45 +8,24 @@ This script:
 3. Starts the FastAPI server
 
 Usage:
-    python start_server.py [--host HOST] [--port PORT] [--no-reload]
-
-Examples:
-    python start_server.py
-    python start_server.py --port 8080
-    python start_server.py --host 127.0.0.1 --port 8000 --no-reload
+    python -m src.api.startup [--host HOST] [--port PORT] [--no-reload]
 """
 
-import os
-import sys
 import argparse
+import logging.config
+import os
 import subprocess
-import shutil
+import sys
+from pathlib import Path
+
 from dotenv import load_dotenv
 
+_config_dir = Path(__file__).resolve().parent.parent / "config"
+logging.config.fileConfig(
+    str(_config_dir / "logging.conf"), disable_existing_loggers=False
+)
 
-def get_docker_path():
-    """Get the absolute path to the docker executable.
-
-    Using absolute paths prevents PyCharm debugger issues where it
-    tries to check if 'docker' is a Python script.
-    """
-    docker_path = shutil.which("docker")
-    if docker_path:
-        return docker_path
-
-    # Common Docker paths on different systems
-    common_paths = [
-        "/usr/local/bin/docker",
-        "/usr/bin/docker",
-        "/opt/homebrew/bin/docker",
-        "/Applications/Docker.app/Contents/Resources/bin/docker",
-    ]
-
-    for path in common_paths:
-        if os.path.isfile(path) and os.access(path, os.X_OK):
-            return path
-
-    return "docker"  # Fallback to PATH lookup
+from src.utils.docker import get_docker_path
 
 
 def check_python_version():
@@ -66,20 +45,14 @@ def check_docker():
 
     try:
         result = subprocess.run(
-            [docker_cmd, "--version"],
-            capture_output=True,
-            text=True,
-            timeout=10
+            [docker_cmd, "--version"], capture_output=True, text=True, timeout=10
         )
         if result.returncode == 0:
             print(f"  Docker: {result.stdout.strip()}")
 
             # Check if Docker daemon is running
             info_result = subprocess.run(
-                [docker_cmd, "info"],
-                capture_output=True,
-                text=True,
-                timeout=10
+                [docker_cmd, "info"], capture_output=True, text=True, timeout=10
             )
             if info_result.returncode == 0:
                 print("  Docker daemon: Running")
@@ -141,7 +114,7 @@ def check_dependencies():
         "langchain",
         "langchain_anthropic",
         "mcp",
-        "dotenv"
+        "dotenv",
     ]
 
     missing = []
@@ -171,7 +144,7 @@ def pull_mcp_image():
         result = subprocess.run(
             [docker_cmd, "pull", "ghcr.io/github/github-mcp-server"],
             capture_output=False,  # Show progress
-            timeout=600  # 10 minutes
+            timeout=600,  # 10 minutes
         )
 
         if result.returncode == 0:
@@ -188,24 +161,32 @@ def pull_mcp_image():
 
 def start_server(host: str, port: int, reload: bool):
     """Start the FastAPI server"""
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"Starting Dependency Update Automation API")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print(f"  Host: {host}")
     print(f"  Port: {port}")
     print(f"  Auto-reload: {'Enabled' if reload else 'Disabled'}")
     print(f"  API Docs: http://{host}:{port}/docs")
     print(f"  Health Check: http://{host}:{port}/health")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
     import uvicorn
 
+    reload_kwargs = {}
+    if reload:
+        reload_kwargs = {
+            "reload_dirs": ["src"],
+            "reload_excludes": ["*.pyc", "__pycache__", "*.log", ".git", "*.egg-info"],
+        }
+
     uvicorn.run(
-        "api_server:app",
+        "src.api.server:app",
         host=host,
         port=port,
         reload=reload,
-        log_level="info"
+        log_level="info",
+        **reload_kwargs,
     )
 
 
@@ -216,23 +197,19 @@ def main():
     parser.add_argument(
         "--host",
         default=os.getenv("HOST", "0.0.0.0"),
-        help="Host to bind to (default: 0.0.0.0)"
+        help="Host to bind to (default: 0.0.0.0)",
     )
     parser.add_argument(
         "--port",
         type=int,
         default=int(os.getenv("PORT", 8000)),
-        help="Port to bind to (default: 8000)"
+        help="Port to bind to (default: 8000)",
     )
     parser.add_argument(
-        "--no-reload",
-        action="store_true",
-        help="Disable auto-reload (for production)"
+        "--no-reload", action="store_true", help="Disable auto-reload (for production)"
     )
     parser.add_argument(
-        "--skip-checks",
-        action="store_true",
-        help="Skip prerequisite checks"
+        "--skip-checks", action="store_true", help="Skip prerequisite checks"
     )
 
     args = parser.parse_args()
@@ -274,11 +251,7 @@ def main():
 
     # Start the server
     try:
-        start_server(
-            host=args.host,
-            port=args.port,
-            reload=not args.no_reload
-        )
+        start_server(host=args.host, port=args.port, reload=not args.no_reload)
     except KeyboardInterrupt:
         print("\n\nServer stopped by user")
     except Exception as e:

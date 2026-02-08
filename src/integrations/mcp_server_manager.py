@@ -7,21 +7,23 @@ for the lifetime of the API server, providing better performance by
 avoiding container startup overhead for each request.
 """
 
-import os
 import asyncio
+import os
 import subprocess
-import shutil
-from typing import Optional, List, Dict, Any
 from dataclasses import dataclass
 from enum import Enum
+from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
+
+from src.utils.docker import detect_container_runtime, get_docker_path
 
 load_dotenv()
 
 
 class MCPServerStatus(Enum):
     """Status of the MCP server."""
+
     STOPPED = "stopped"
     STARTING = "starting"
     RUNNING = "running"
@@ -32,31 +34,12 @@ class MCPServerStatus(Enum):
 @dataclass
 class MCPServerInfo:
     """Information about the MCP server state."""
+
     status: MCPServerStatus
     container_id: Optional[str] = None
     tools_count: int = 0
     error_message: Optional[str] = None
     reconnect_attempts: int = 0
-
-
-def get_docker_path() -> str:
-    """Get the absolute path to the docker executable."""
-    docker_path = shutil.which("docker")
-    if docker_path:
-        return docker_path
-
-    common_paths = [
-        "/usr/local/bin/docker",
-        "/usr/bin/docker",
-        "/opt/homebrew/bin/docker",
-        "/Applications/Docker.app/Contents/Resources/bin/docker",
-    ]
-
-    for path in common_paths:
-        if os.path.isfile(path) and os.access(path, os.X_OK):
-            return path
-
-    return "docker"
 
 
 class PersistentMCPServer:
@@ -68,14 +51,14 @@ class PersistentMCPServer:
     the overhead of starting a new container for each request.
     """
 
-    _instance: Optional['PersistentMCPServer'] = None
+    _instance: Optional["PersistentMCPServer"] = None
     _lock = asyncio.Lock()
 
     def __init__(self):
         """Initialize the MCP server manager."""
         self.github_token = os.getenv("GITHUB_PERSONAL_ACCESS_TOKEN")
         self.docker_path = get_docker_path()
-        self.container_runtime = self._detect_container_runtime()
+        self.container_runtime = self._detect_runtime()
 
         self._client = None
         self._session = None
@@ -88,7 +71,7 @@ class PersistentMCPServer:
         self._max_reconnect_attempts = 3
 
     @classmethod
-    async def get_instance(cls) -> 'PersistentMCPServer':
+    async def get_instance(cls) -> "PersistentMCPServer":
         """Get or create the singleton instance."""
         if cls._instance is None:
             async with cls._lock:
@@ -103,11 +86,10 @@ class PersistentMCPServer:
             await cls._instance.stop()
             cls._instance = None
 
-    def _detect_container_runtime(self) -> str:
+    def _detect_runtime(self) -> str:
         """Detect available container runtime."""
-        from github_mcp_client import _detect_container_runtime
         try:
-            return _detect_container_runtime()
+            return detect_container_runtime()
         except RuntimeError:
             return self.docker_path
 
@@ -124,7 +106,7 @@ class PersistentMCPServer:
             container_id=self._container_id,
             tools_count=len(self._tools),
             error_message=self._error_message,
-            reconnect_attempts=self._reconnect_attempts
+            reconnect_attempts=self._reconnect_attempts,
         )
 
     @property
@@ -153,28 +135,29 @@ class PersistentMCPServer:
         self._error_message = None
 
         try:
-            from github_mcp_client import GitHubMCPClient
+            from mcp import ClientSession
+            from mcp.client.stdio import StdioServerParameters, stdio_client
 
-            print("🚀 Starting persistent MCP server...")
+            print("Starting persistent MCP server...")
 
-            # Create the client with auto-detected runtime
-            self._client = GitHubMCPClient(
-                github_token=self.github_token,
-                container_runtime=self.container_runtime
+            server_params = StdioServerParameters(
+                command=self.container_runtime,
+                args=[
+                    "run",
+                    "-i",
+                    "--rm",
+                    "-e",
+                    f"GITHUB_PERSONAL_ACCESS_TOKEN={self.github_token}",
+                    "ghcr.io/github/github-mcp-server",
+                    "stdio",
+                ],
+                env={"GITHUB_PERSONAL_ACCESS_TOKEN": self.github_token},
             )
 
-            # Enter the async context to start the container
-            self._stdio_context = self._client.stdio_context
+            self._stdio_context = stdio_client(server_params)
+            streams = await self._stdio_context.__aenter__()
 
-            # Manually initialize the session
-            from mcp.client.stdio import stdio_client
-            from mcp import ClientSession
-
-            self._stdio_context = stdio_client(self._client.server_params)
-            transport = await self._stdio_context.__aenter__()
-            stdio, write = transport
-
-            self._session = ClientSession(stdio, write)
+            self._session = ClientSession(*streams)
             await self._session.__aenter__()
             await self._session.initialize()
 
@@ -188,7 +171,7 @@ class PersistentMCPServer:
             self._status = MCPServerStatus.RUNNING
             self._reconnect_attempts = 0
 
-            print(f"✅ Persistent MCP server started - {len(self._tools)} tools available")
+            print(f"Persistent MCP server started - {len(self._tools)} tools available")
             if self._container_id:
                 print(f"   Container ID: {self._container_id[:12]}")
 
@@ -197,18 +180,18 @@ class PersistentMCPServer:
         except Exception as e:
             self._status = MCPServerStatus.ERROR
             self._error_message = str(e)
-            print(f"❌ Failed to start MCP server: {e}")
+            print(f"Failed to start MCP server: {e}")
             await self._cleanup()
             return False
 
     async def stop(self):
         """Stop the persistent MCP server."""
-        print("🛑 Stopping persistent MCP server...")
+        print("Stopping persistent MCP server...")
         await self._cleanup()
         self._status = MCPServerStatus.STOPPED
         self._container_id = None
         self._tools = []
-        print("✅ MCP server stopped")
+        print("MCP server stopped")
 
     async def _cleanup(self):
         """Clean up resources."""
@@ -232,15 +215,20 @@ class PersistentMCPServer:
         """Try to get the ID of the running MCP container."""
         try:
             result = subprocess.run(
-                [self.docker_path, "ps", "-q", "--filter",
-                 "ancestor=ghcr.io/github/github-mcp-server"],
+                [
+                    self.docker_path,
+                    "ps",
+                    "-q",
+                    "--filter",
+                    "ancestor=ghcr.io/github/github-mcp-server",
+                ],
                 capture_output=True,
                 text=True,
-                timeout=5
+                timeout=5,
             )
             if result.returncode == 0 and result.stdout.strip():
                 # Return the most recent container
-                return result.stdout.strip().split('\n')[0]
+                return result.stdout.strip().split("\n")[0]
         except Exception:
             pass
         return None
@@ -254,13 +242,15 @@ class PersistentMCPServer:
         """
         if self._reconnect_attempts >= self._max_reconnect_attempts:
             self._status = MCPServerStatus.ERROR
-            self._error_message = f"Max reconnect attempts ({self._max_reconnect_attempts}) exceeded"
+            self._error_message = (
+                f"Max reconnect attempts ({self._max_reconnect_attempts}) exceeded"
+            )
             return False
 
         self._status = MCPServerStatus.RECONNECTING
         self._reconnect_attempts += 1
 
-        print(f"🔄 Reconnecting to MCP server (attempt {self._reconnect_attempts})...")
+        print(f"Reconnecting to MCP server (attempt {self._reconnect_attempts})...")
 
         await self._cleanup()
 
@@ -287,7 +277,9 @@ class PersistentMCPServer:
 
         return False
 
-    async def call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+    async def call_tool(
+        self, tool_name: str, arguments: Dict[str, Any]
+    ) -> Dict[str, Any]:
         """
         Call an MCP tool.
 
@@ -301,7 +293,7 @@ class PersistentMCPServer:
         if not await self.ensure_connected():
             return {
                 "status": "error",
-                "message": f"MCP server not available: {self._error_message}"
+                "message": f"MCP server not available: {self._error_message}",
             }
 
         try:
@@ -309,11 +301,13 @@ class PersistentMCPServer:
 
             if result.content and len(result.content) > 0:
                 response_text = (
-                    result.content[0].text if hasattr(result.content[0], 'text')
+                    result.content[0].text
+                    if hasattr(result.content[0], "text")
                     else str(result.content[0])
                 )
 
                 import json
+
                 try:
                     return {"status": "success", "data": json.loads(response_text)}
                 except json.JSONDecodeError:
@@ -339,7 +333,7 @@ class PersistentMCPServer:
         title: str,
         body: str,
         head: str,
-        base: str = "main"
+        base: str = "main",
     ) -> Dict[str, Any]:
         """Create a GitHub Pull Request using MCP."""
         return await self.call_tool(
@@ -350,8 +344,8 @@ class PersistentMCPServer:
                 "title": title,
                 "body": body,
                 "head": head,
-                "base": base
-            }
+                "base": base,
+            },
         )
 
     async def create_issue(
@@ -360,7 +354,7 @@ class PersistentMCPServer:
         repo_name: str,
         title: str,
         body: str,
-        labels: Optional[List[str]] = None
+        labels: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """Create a GitHub Issue using MCP."""
         if labels is None:
@@ -369,12 +363,50 @@ class PersistentMCPServer:
         return await self.call_tool(
             "issue_write",
             {
+                "method": "create",
                 "owner": repo_owner,
                 "repo": repo_name,
                 "title": title,
                 "body": body,
-                "labels": labels
-            }
+                "labels": labels,
+            },
+        )
+
+    async def create_branch(
+        self,
+        repo_owner: str,
+        repo_name: str,
+        branch: str,
+        from_branch: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Create a new branch in a GitHub repository using MCP."""
+        args = {
+            "owner": repo_owner,
+            "repo": repo_name,
+            "branch": branch,
+        }
+        if from_branch:
+            args["from_branch"] = from_branch
+        return await self.call_tool("create_branch", args)
+
+    async def push_files(
+        self,
+        repo_owner: str,
+        repo_name: str,
+        branch: str,
+        files: List[Dict[str, str]],
+        message: str,
+    ) -> Dict[str, Any]:
+        """Push multiple files to a GitHub repository in a single commit using MCP."""
+        return await self.call_tool(
+            "push_files",
+            {
+                "owner": repo_owner,
+                "repo": repo_name,
+                "branch": branch,
+                "files": files,
+                "message": message,
+            },
         )
 
 
