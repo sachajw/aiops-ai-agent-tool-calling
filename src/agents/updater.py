@@ -319,7 +319,7 @@ def git_operations(repo_path: str, operation: str, **kwargs) -> str:
 
             branch_name = kwargs.get(
                 "branch_name",
-                f"deps/auto-update-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
+                "AiOrteliusBot/dependency",
             )
 
             async def _create_branch(server, o, r, b):
@@ -676,8 +676,8 @@ STEP 3: BUILD AND TEST
 
 STEP 4: HANDLE RESULTS
 - IF build and tests PASS:
-  1. git_operations: create_branch (auto-detects repo from git remote)
-  2. git_operations: push_files with branch_name and message (auto-detects repo, reads modified files, pushes via GitHub MCP)
+  1. git_operations: create_branch with branch_name="AiOrteliusBot/dependency" (always use this exact name)
+  2. git_operations: push_files with branch_name="AiOrteliusBot/dependency" and message (auto-detects repo, reads modified files, pushes via GitHub MCP)
      - If push_files returns status="no_changes", skip PR and return "All dependencies are already up to date."
   3. create_github_pr with repo_name (owner/repo format), branch_name, title, and body
   4. Return the PR URL.

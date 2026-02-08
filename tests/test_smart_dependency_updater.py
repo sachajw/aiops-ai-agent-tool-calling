@@ -389,7 +389,7 @@ class TestGitOperations:
         )
 
         assert result["status"] == "success"
-        assert "deps/auto-update" in result["branch_name"]
+        assert result["branch_name"] == "AiOrteliusBot/dependency"
         mock_run_mcp_call.assert_called_once()
 
     @patch("src.agents.updater._run_mcp_call")
@@ -407,7 +407,7 @@ class TestGitOperations:
         )
 
         assert result["status"] == "success"
-        assert "deps/auto-update" in result["branch_name"]
+        assert result["branch_name"] == "AiOrteliusBot/dependency"
 
     @patch("src.agents.updater._run_mcp_call")
     def test_push_files(self, mock_run_mcp_call, git_repo):
