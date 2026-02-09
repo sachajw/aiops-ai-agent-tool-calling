@@ -91,6 +91,19 @@ def detect_build_command(repo_path: str) -> str:
                     commands["install"] = "poetry install"
                     commands["test"] = "poetry run pytest"
                     commands["build"] = "poetry build"
+                elif os.path.exists(os.path.join(repo_path, "Pipfile")):
+                    commands["package_manager"] = "pipenv"
+                    commands["install"] = "pipenv install"
+                    commands["test"] = "pipenv run pytest"
+                elif os.path.exists(os.path.join(repo_path, "requirements.txt")):
+                    commands["package_manager"] = "pip"
+                    commands["install"] = "pip install -r requirements.txt"
+                    commands["test"] = "pytest"
+                else:
+                    # pyproject.toml without poetry — assume pip
+                    commands["package_manager"] = "pip"
+                    commands["install"] = "pip install ."
+                    commands["test"] = "pytest"
 
         elif os.path.exists(os.path.join(repo_path, "Pipfile")):
             commands["package_manager"] = "pipenv"
@@ -551,11 +564,17 @@ def create_github_pr(
         )
 
         if result["status"] == "success":
-            pr_url = (
-                result.get("data", {}).get("html_url", "")
-                if isinstance(result.get("data"), dict)
-                else ""
-            )
+            # Extract PR URL from various possible response formats
+            pr_url = ""
+            data = result.get("data", {})
+            if isinstance(data, dict):
+                pr_url = data.get("html_url", "")
+                # Some MCP responses nest the URL differently
+                if not pr_url and "url" in data:
+                    pr_url = data["url"]
+            # Fallback: pr_url at top level (old client format)
+            if not pr_url:
+                pr_url = result.get("pr_url", "")
             return json.dumps(
                 {
                     "status": "success",
@@ -615,11 +634,15 @@ def create_github_issue(
         )
 
         if result["status"] == "success":
-            issue_url = (
-                result.get("data", {}).get("html_url", "")
-                if isinstance(result.get("data"), dict)
-                else ""
-            )
+            # Extract issue URL from various possible response formats
+            issue_url = ""
+            data = result.get("data", {})
+            if isinstance(data, dict):
+                issue_url = data.get("html_url", "")
+                if not issue_url and "url" in data:
+                    issue_url = data["url"]
+            if not issue_url:
+                issue_url = result.get("issue_url", "")
             return json.dumps(
                 {
                     "status": "success",
@@ -665,7 +688,7 @@ STEP 1: DETECT BUILD COMMANDS
 STEP 2: UPDATE DEPENDENCIES
 - For npm/yarn/pnpm: Use apply_all_updates with the dependency file content and outdated packages, then write_dependency_file, then run install command.
 - For pip/poetry: Use apply_all_updates, write_dependency_file, then run install command.
-- For go: Run "go get -u all && go mod tidy" using run_build_test. Do NOT run individual go get commands per package.
+- For go: Build a SINGLE command with ALL outdated packages: "go get pkg1@version1 pkg2@version2 ... && go mod tidy" and run it using run_build_test. This updates only the specific packages identified as outdated, not the entire dependency tree.
 - For cargo: Run "cargo update" using run_build_test.
 - For other package managers: Use the appropriate bulk update command via run_build_test.
 
@@ -679,12 +702,34 @@ STEP 4: HANDLE RESULTS
   1. git_operations: create_branch with branch_name="AiOrteliusBot/dependency" (always use this exact name)
   2. git_operations: push_files with branch_name="AiOrteliusBot/dependency" and message (auto-detects repo, reads modified files, pushes via GitHub MCP)
      - If push_files returns status="no_changes", skip PR and return "All dependencies are already up to date."
-  3. create_github_pr with repo_name (owner/repo format), branch_name, title, and body
+  3. create_github_pr with repo_name (owner/repo format), branch_name, title, and body.
+     The PR body MUST use this Renovate-style markdown table format:
+
+     ## This PR contains updated dependencies:
+
+     | Package | Type | Update | Change |
+     |---------|------|--------|--------|
+     | package-name | type | update-type | `old` → `new` |
+
+     Where:
+     - Type is: npm, pip, go, cargo, etc.
+     - Update is: major, minor, patch
+
   4. Return the PR URL.
 
-- IF build or tests FAIL:
+- IF BUILD FAILS (exit_code != 0 from the build command):
+  Do NOT attempt rollbacks. The build is broken — create an issue immediately.
+  1. create_github_issue with title "Dependency Update: Build Failure" and body containing:
+     - The list of packages that were updated (name, old version, new version)
+     - The full build error output (stderr)
+     - The build command that was run
+  2. Return the Issue URL.
+
+- IF TESTS FAIL (build passed but test command exit_code != 0):
   1. Use parse_error_for_dependency to identify the breaking package.
-  2. Rollback that package's MAJOR update using rollback_major_update + write_dependency_file.
+  2. Rollback that package:
+     - For go: Run "go get <package>@<old_version> && go mod tidy" using run_build_test.
+     - For other languages: Use rollback_major_update + write_dependency_file.
   3. Re-run build and test (go back to STEP 3).
   4. Repeat up to 3 times max.
 
@@ -698,7 +743,14 @@ IMPORTANT RULES:
 - Do NOT run exploratory shell commands (cat, grep, ls, go list). Only run build/test commands.
 - Do NOT call categorize_updates — the orchestrator already did that.
 - Do NOT re-read dependency files to inspect them. Trust the tool outputs.
-- Keep ALL your text responses under 50 words. Just state what you're doing next or the final result."""
+- Keep ALL your text responses under 50 words. Just state what you're doing next or the final result.
+- Your FINAL response MUST be a JSON object with the result:
+  {"status": "pr_created", "url": "<PR_URL>"} or
+  {"status": "issue_created", "url": "<ISSUE_URL>"} or
+  {"status": "up_to_date", "message": "All dependencies are already up to date."} or
+  {"status": "error", "message": "<error details>"}
+- If create_github_issue fails (e.g., permission denied on a forked repo), return:
+  {"status": "issue_failed", "message": "<error>", "details": "<the issue body you tried to create>"}"""
 
     llm = ChatAnthropic(model="claude-sonnet-4-5-20250929", temperature=0)
 

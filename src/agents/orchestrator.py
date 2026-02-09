@@ -29,6 +29,10 @@ from src.callbacks.agent_activity import AgentActivityHandler
 # Load environment variables
 load_dotenv()
 
+# Module-level reference to the current orchestrator handler so child tools
+# can register their sub-agent handlers for aggregated cost tracking.
+_current_orchestrator_handler: Optional[AgentActivityHandler] = None
+
 
 @tool
 def analyze_repository(repo_url: str) -> str:
@@ -46,6 +50,9 @@ def analyze_repository(repo_url: str) -> str:
 
         analyzer_agent = create_dependency_analyzer_agent()
         handler = AgentActivityHandler("analyzer")
+
+        if _current_orchestrator_handler:
+            _current_orchestrator_handler.add_child_handler(handler)
 
         result = analyzer_agent.invoke(
             {
@@ -95,6 +102,9 @@ def smart_update_and_test(
 
         updater_agent = create_smart_updater_agent()
         handler = AgentActivityHandler("updater")
+
+        if _current_orchestrator_handler:
+            _current_orchestrator_handler.add_child_handler(handler)
 
         result = updater_agent.invoke(
             {
@@ -189,13 +199,18 @@ STEP 1: Call analyze_repository with the repository URL.
 STEP 2: Call smart_update_and_test with repo_path, package_manager, and outdated_packages from step 1.
 - This tool handles: updating deps, building, testing, creating PR or Issue.
 
-STEP 3: Return a SHORT summary with the PR URL or Issue URL.
+STEP 3: Return the result as a JSON object. Extract the URL from smart_update_and_test's result.
+- Your final response MUST be ONLY this JSON and nothing else:
+  {"status": "pr_created", "url": "<PR_URL>"} or
+  {"status": "issue_created", "url": "<ISSUE_URL>"} or
+  {"status": "up_to_date", "message": "..."} or
+  {"status": "error", "message": "..."}
 
 IMPORTANT RULES:
 - Do NOT call any other tools. Only use analyze_repository and smart_update_and_test.
 - Pass the repo_path from analyze_repository directly to smart_update_and_test.
 - Keep ALL your text responses under 50 words. No analysis, no reports, no summaries of intermediate results.
-- When calling smart_update_and_test, pass the outdated_packages as a compact JSON array string — do NOT reformat or annotate them."""
+- When calling smart_update_and_test, pass the outdated_packages as a compact JSON string — do NOT reformat or annotate them."""
 
     llm = ChatAnthropic(model="claude-sonnet-4-5-20250929", temperature=0)
 
@@ -269,8 +284,10 @@ Prerequisites:
     print()
 
     # Create and run orchestrator
+    global _current_orchestrator_handler
     orchestrator = create_main_orchestrator()
     handler = AgentActivityHandler("orchestrator")
+    _current_orchestrator_handler = handler
 
     try:
         result = orchestrator.invoke(
@@ -291,7 +308,44 @@ Prerequisites:
         print()
 
         final_message = result["messages"][-1]
-        print(final_message.content)
+        try:
+            result_json = json.loads(final_message.content)
+            status = result_json.get("status", "unknown")
+            if status == "pr_created":
+                print(f"  PR Created: {result_json.get('url', 'N/A')}")
+            elif status == "issue_created":
+                print(f"  Issue Created: {result_json.get('url', 'N/A')}")
+            elif status == "issue_failed":
+                print(f"  Could not create issue: {result_json.get('message', '')}")
+                if result_json.get("details"):
+                    print(f"\n  Issue details:\n{result_json['details']}")
+            elif status == "up_to_date":
+                print(
+                    f"  {result_json.get('message', 'All dependencies are up to date.')}"
+                )
+            else:
+                print(f"  Status: {status}")
+                if result_json.get("message"):
+                    print(f"  {result_json['message']}")
+        except (json.JSONDecodeError, TypeError):
+            print(final_message.content)
+        print()
+
+        # Print cost summary
+        usage = handler.get_usage_summary()
+        print("=" * 80)
+        print("  USAGE & COST")
+        print("=" * 80)
+        print(
+            f"  Total tokens: {usage['total_tokens']:,} ({usage['input_tokens']:,} in, {usage['output_tokens']:,} out)"
+        )
+        print(f"  LLM calls:    {usage['llm_calls']}")
+        print(f"  Est. cost:    ${usage['estimated_cost_usd']:.4f}")
+        if usage.get("children"):
+            for child in usage["children"]:
+                print(
+                    f"    - {child['agent']}: {child['total_tokens']:,} tokens, ${child['estimated_cost_usd']:.4f}"
+                )
         print()
 
     except KeyboardInterrupt:

@@ -33,6 +33,11 @@ def apply_all_updates(
         updates = json.loads(outdated_packages)
         applied_updates = []
 
+        # Normalize: accept both "latest" and "latest_version" keys
+        for u in updates:
+            if "latest" not in u and "latest_version" in u:
+                u["latest"] = u["latest_version"]
+
         if file_type == "package.json":
             package_data = json.loads(current_content)
 
@@ -41,7 +46,9 @@ def apply_all_updates(
                 if section in package_data:
                     for update in updates:
                         pkg_name = update["name"]
-                        new_version = update["latest"]
+                        new_version = update.get(
+                            "latest", update.get("latest_version", "")
+                        )
 
                         if pkg_name in package_data[section]:
                             old_version = package_data[section][pkg_name]
@@ -93,7 +100,9 @@ def apply_all_updates(
                 # Update if found
                 if pkg_name and pkg_name.lower() in updates_dict:
                     update_info = updates_dict[pkg_name.lower()]
-                    new_version = update_info["latest"]
+                    new_version = update_info.get(
+                        "latest", update_info.get("latest_version", "")
+                    )
                     updated_lines.append(f"{pkg_name}=={new_version}")
                     applied_updates.append(
                         {
@@ -127,7 +136,9 @@ def apply_all_updates(
                         indent, pkg_name, current_version = match.groups()
                         if pkg_name.lower() in updates_dict:
                             update_info = updates_dict[pkg_name.lower()]
-                            new_version = update_info["latest"]
+                            new_version = update_info.get(
+                                "latest", update_info.get("latest_version", "")
+                            )
                             updated_lines.append(
                                 f'{indent}{pkg_name} = "{new_version}"'
                             )

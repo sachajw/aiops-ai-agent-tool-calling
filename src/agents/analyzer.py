@@ -25,6 +25,19 @@ from src.config import language_map as LanguageMap
 # Import caching module
 from src.services.cache import get_cache
 
+
+def _get_nested(obj, path, default="N/A"):
+    """Get nested value from dict using dot notation (e.g., 'Update.Version')."""
+    for key in path.split("."):
+        if isinstance(obj, dict):
+            obj = obj.get(key)
+        else:
+            return default
+        if obj is None:
+            return default
+    return obj
+
+
 # Load environment variables from .env file
 load_dotenv()
 
@@ -108,6 +121,9 @@ def detect_package_manager(repo_path: Path) -> str:
         - package_manager
         - build_command
         - outdated_command
+        - output_format
+        - field_map
+        - skip_when
     """
     language_map = LanguageMap.LANGUAGE_PACKAGE_BUILD_MAP
     repo_files = {p.name for p in repo_path.rglob("*") if p.is_file()}
@@ -136,6 +152,9 @@ def detect_package_manager(repo_path: Path) -> str:
                         "package_manager": pm_name,
                         "build_command": pm_cfg.get("build"),
                         "outdated_command": pm_cfg.get("outdated_cmd"),
+                        "output_format": pm_cfg.get("output_format", "text"),
+                        "field_map": pm_cfg.get("field_map", {}),
+                        "skip_when": pm_cfg.get("skip_when", {}),
                     }
                 )
 
@@ -147,6 +166,9 @@ def detect_package_manager(repo_path: Path) -> str:
                             "package_manager": pm_name,
                             "build_command": pm_cfg.get("build"),
                             "outdated_command": pm_cfg.get("outdated_cmd"),
+                            "output_format": pm_cfg.get("output_format", "text"),
+                            "field_map": pm_cfg.get("field_map", {}),
+                            "skip_when": pm_cfg.get("skip_when", {}),
                         }
                     )
 
@@ -158,6 +180,9 @@ def detect_package_manager(repo_path: Path) -> str:
                 "package_manager": pm_name,
                 "build_command": pm_cfg.get("build"),
                 "outdated_command": pm_cfg.get("outdated_cmd"),
+                "output_format": pm_cfg.get("output_format", "text"),
+                "field_map": pm_cfg.get("field_map", {}),
+                "skip_when": pm_cfg.get("skip_when", {}),
             }
         )
 
@@ -167,6 +192,9 @@ def detect_package_manager(repo_path: Path) -> str:
             "package_manager": None,
             "build_command": None,
             "outdated_command": None,
+            "output_format": "text",
+            "field_map": {},
+            "skip_when": {},
         }
     )
 
@@ -240,31 +268,83 @@ def check_outdated_dependencies(
         outdated_list = []
 
         if stdout:
+            output_format = detected_info.get("output_format", "text")
+            field_map = detected_info.get("field_map", {})
+
             try:
-                data = json.loads(stdout)
-                # Standardize JSON output for common managers
-                if package_manager in ["npm", "yarn", "pnpm"]:
-                    for pkg, info in data.items():
+                if output_format == "json_dict":
+                    data = json.loads(stdout)
+                    for pkg_key, info in data.items():
+                        name_field = field_map.get("name", "name")
                         outdated_list.append(
                             {
-                                "name": pkg,
-                                "current": info.get("current", "N/A"),
-                                "wanted": info.get("wanted", "N/A"),
-                                "latest": info.get("latest", "N/A"),
-                                "location": info.get("location", "N/A"),
+                                "name": pkg_key
+                                if name_field == "_key"
+                                else info.get(name_field, pkg_key),
+                                "current": info.get(
+                                    field_map.get("current", "current"), "N/A"
+                                ),
+                                "latest": info.get(
+                                    field_map.get("latest", "latest"), "N/A"
+                                ),
                             }
                         )
-                elif package_manager in ["pip", "pipenv", "poetry"]:
-                    for pkg, info in data.items():
+
+                elif output_format == "json_array":
+                    data = json.loads(stdout)
+                    for item in data:
                         outdated_list.append(
                             {
-                                "name": pkg,
-                                "current": info.get("version", "N/A"),
-                                "latest": info.get("latest_version", "N/A"),
+                                "name": item.get(field_map.get("name", "name"), "N/A"),
+                                "current": item.get(
+                                    field_map.get("current", "current"), "N/A"
+                                ),
+                                "latest": item.get(
+                                    field_map.get("latest", "latest"), "N/A"
+                                ),
                             }
                         )
-                else:
+
+                elif output_format == "ndjson":
+                    skip_when = detected_info.get("skip_when", {})
+                    decoder = json.JSONDecoder()
+                    pos = 0
+                    while pos < len(stdout):
+                        while pos < len(stdout) and stdout[pos] in " \t\n\r":
+                            pos += 1
+                        if pos >= len(stdout):
+                            break
+                        try:
+                            obj, end_pos = decoder.raw_decode(stdout, pos)
+                            pos = end_pos
+                        except json.JSONDecodeError:
+                            break
+
+                        # Apply skip rules from language map
+                        skip = False
+                        for key, val in skip_when.items():
+                            if val is None and key not in obj:
+                                skip = True
+                            elif val is not None and obj.get(key) == val:
+                                skip = True
+                        if skip:
+                            continue
+
+                        outdated_list.append(
+                            {
+                                "name": _get_nested(obj, field_map.get("name", "name")),
+                                "current": _get_nested(
+                                    obj, field_map.get("current", "current")
+                                ),
+                                "latest": _get_nested(
+                                    obj, field_map.get("latest", "latest")
+                                ),
+                            }
+                        )
+
+                else:  # "text" format — pass raw output for LLM to interpret
                     outdated_list.append({"raw_output": stdout})
+
             except json.JSONDecodeError:
                 outdated_list.append({"raw_output": stdout})
 

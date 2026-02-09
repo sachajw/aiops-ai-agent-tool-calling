@@ -4,6 +4,7 @@ Exposes REST endpoints to analyze and update repository dependencies.
 """
 
 import asyncio
+import json
 import os
 import subprocess
 from contextlib import asynccontextmanager
@@ -43,6 +44,16 @@ class JobResponse(BaseModel):
     repository: str
 
 
+class UsageResponse(BaseModel):
+    """Token usage and cost for a job"""
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+    llm_calls: int = 0
+    estimated_cost_usd: float = 0.0
+
+
 class JobStatusResponse(BaseModel):
     """Response model for job status"""
 
@@ -50,6 +61,7 @@ class JobStatusResponse(BaseModel):
     status: str
     result: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
+    usage: Optional[UsageResponse] = None
 
 
 # In-memory job storage (use Redis/DB for production)
@@ -194,6 +206,12 @@ async def process_repository_update(
         from src.callbacks.agent_activity import AgentActivityHandler
 
         handler = AgentActivityHandler("orchestrator", job_id=job_id)
+
+        # Set module-level handler so child agents register for cost aggregation
+        import src.agents.orchestrator as orch_module
+
+        orch_module._current_orchestrator_handler = handler
+
         print(f"[Job {job_id}] Processing repository: {repository}")
 
         # Run agent.invoke() in a thread so it doesn't block the event loop.
@@ -222,14 +240,32 @@ async def process_repository_update(
         )
 
         # Update job with results
-        jobs_storage[job_id]["status"] = "completed"
-        jobs_storage[job_id]["result"] = {
-            "output": result.get("output", ""),
-            "repository": repository,
-        }
-        jobs_storage[job_id]["activity_log"] = handler.activity_log
+        usage_summary = handler.get_usage_summary()
+        final_message = result["messages"][-1].content if result.get("messages") else ""
 
-        print(f"[Job {job_id}] Completed successfully")
+        # Try to parse structured JSON from orchestrator's final message
+        parsed_result = {"output": final_message, "repository": repository}
+        try:
+            result_json = json.loads(final_message)
+            parsed_result["status"] = result_json.get("status", "unknown")
+            if "url" in result_json:
+                parsed_result["url"] = result_json["url"]
+            if "message" in result_json:
+                parsed_result["message"] = result_json["message"]
+            if "details" in result_json:
+                parsed_result["details"] = result_json["details"]
+        except (json.JSONDecodeError, TypeError):
+            parsed_result["status"] = "completed"
+
+        jobs_storage[job_id]["status"] = "completed"
+        jobs_storage[job_id]["result"] = parsed_result
+        jobs_storage[job_id]["activity_log"] = handler.activity_log
+        jobs_storage[job_id]["usage"] = usage_summary
+
+        print(
+            f"[Job {job_id}] Completed — Cost: ${usage_summary['estimated_cost_usd']:.4f} "
+            f"({usage_summary['total_tokens']:,} tokens, {usage_summary['llm_calls']} LLM calls)"
+        )
 
     except Exception as e:
         print(f"[Job {job_id}] Failed: {str(e)}")
@@ -400,11 +436,23 @@ async def get_job_status(job_id: str):
 
     job = jobs_storage[job_id]
 
+    usage_data = None
+    if job.get("usage"):
+        u = job["usage"]
+        usage_data = UsageResponse(
+            input_tokens=u.get("input_tokens", 0),
+            output_tokens=u.get("output_tokens", 0),
+            total_tokens=u.get("total_tokens", 0),
+            llm_calls=u.get("llm_calls", 0),
+            estimated_cost_usd=u.get("estimated_cost_usd", 0.0),
+        )
+
     return JobStatusResponse(
         job_id=job["job_id"],
         status=job["status"],
         result=job.get("result"),
         error=job.get("error"),
+        usage=usage_data,
     )
 
 
