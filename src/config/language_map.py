@@ -11,7 +11,7 @@ LANGUAGE_PACKAGE_BUILD_MAP = {
             "pip": {
                 "lock_files": [],
                 "install": "pip install -r requirements.txt",
-                "build": None,
+                "build": "pip install -r requirements.txt",
                 "outdated_cmd": "pip list --outdated --format json",
                 "output_format": "json_array",
                 "field_map": {
@@ -23,7 +23,7 @@ LANGUAGE_PACKAGE_BUILD_MAP = {
             "pip-tools": {
                 "lock_files": ["requirements.txt"],
                 "install": "pip install -r requirements.txt",
-                "build": None,
+                "build": "pip install -r requirements.txt",
                 "outdated_cmd": "pip list --outdated --format json",
                 "output_format": "json_array",
                 "field_map": {
@@ -35,14 +35,14 @@ LANGUAGE_PACKAGE_BUILD_MAP = {
             "pipenv": {
                 "lock_files": ["Pipfile.lock"],
                 "install": "pipenv install --deploy",
-                "build": None,
+                "build": "pipenv install",
                 "outdated_cmd": "pipenv update --outdated",
                 "output_format": "text",
             },
             "poetry": {
                 "lock_files": ["poetry.lock"],
                 "install": "poetry install --no-root",
-                "build": None,
+                "build": "poetry install",
                 "outdated_cmd": "poetry show --outdated",
                 "output_format": "text",
             },
@@ -139,7 +139,7 @@ LANGUAGE_PACKAGE_BUILD_MAP = {
             "bundler": {
                 "lock_files": ["Gemfile.lock"],
                 "install": "bundle install",
-                "build": None,
+                "build": "bundle install",
                 "outdated_cmd": "bundle outdated",
                 "output_format": "text",
             }
@@ -151,7 +151,7 @@ LANGUAGE_PACKAGE_BUILD_MAP = {
             "composer": {
                 "lock_files": ["composer.lock"],
                 "install": "composer install",
-                "build": None,
+                "build": "composer install",
                 "outdated_cmd": "composer outdated",
                 "output_format": "text",
             }

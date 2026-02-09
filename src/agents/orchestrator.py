@@ -128,7 +128,7 @@ Return the final PR URL or Issue URL.""",
                     )
                 ]
             },
-            config={"callbacks": [handler]},
+            config={"callbacks": [handler], "recursion_limit": 50},
         )
 
         final_message = result["messages"][-1]

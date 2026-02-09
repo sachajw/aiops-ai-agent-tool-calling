@@ -106,7 +106,7 @@ class TestDetectBuildCommand:
         assert result["commands"]["test"] == "pytest"
 
     def test_detect_pip_with_setup_py(self, temp_repo):
-        """Test detection of pip with setup.py."""
+        """Test detection of pip with setup.py and requirements.txt."""
         with open(os.path.join(temp_repo, "requirements.txt"), "w") as f:
             f.write("requests==2.28.0\n")
         with open(os.path.join(temp_repo, "setup.py"), "w") as f:
@@ -115,7 +115,7 @@ class TestDetectBuildCommand:
         result = json.loads(detect_build_command.invoke(temp_repo))
 
         assert result["status"] == "success"
-        assert result["commands"]["build"] == "python setup.py build"
+        assert result["commands"]["build"] == "pip install -r requirements.txt"
 
     def test_detect_cargo_commands(self, temp_repo):
         """Test detection of cargo commands."""
@@ -389,7 +389,7 @@ class TestGitOperations:
         )
 
         assert result["status"] == "success"
-        assert result["branch_name"] == "AiOrteliusBot/dependency"
+        assert result["branch_name"].startswith("OrteliusAiBot/dep-")
         mock_run_mcp_call.assert_called_once()
 
     @patch("src.agents.updater._run_mcp_call")
@@ -407,7 +407,7 @@ class TestGitOperations:
         )
 
         assert result["status"] == "success"
-        assert result["branch_name"] == "AiOrteliusBot/dependency"
+        assert result["branch_name"].startswith("OrteliusAiBot/dep-")
 
     @patch("src.agents.updater._run_mcp_call")
     def test_push_files(self, mock_run_mcp_call, git_repo):

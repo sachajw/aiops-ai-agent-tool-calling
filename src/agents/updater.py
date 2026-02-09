@@ -83,41 +83,42 @@ def detect_build_command(repo_path: str) -> str:
                 commands["type_check"] = f"{pm} run type-check"
 
         # Python - pip/poetry/pipenv
-        elif os.path.exists(os.path.join(repo_path, "pyproject.toml")):
-            with open(os.path.join(repo_path, "pyproject.toml"), "r") as f:
-                content = f.read()
-                if "[tool.poetry]" in content:
-                    commands["package_manager"] = "poetry"
-                    commands["install"] = "poetry install"
-                    commands["test"] = "poetry run pytest"
-                    commands["build"] = "poetry build"
-                elif os.path.exists(os.path.join(repo_path, "Pipfile")):
-                    commands["package_manager"] = "pipenv"
-                    commands["install"] = "pipenv install"
-                    commands["test"] = "pipenv run pytest"
-                elif os.path.exists(os.path.join(repo_path, "requirements.txt")):
-                    commands["package_manager"] = "pip"
-                    commands["install"] = "pip install -r requirements.txt"
-                    commands["test"] = "pytest"
-                else:
-                    # pyproject.toml without poetry — assume pip
-                    commands["package_manager"] = "pip"
-                    commands["install"] = "pip install ."
-                    commands["test"] = "pytest"
+            elif os.path.exists(os.path.join(repo_path, "pyproject.toml")):
+                with open(os.path.join(repo_path, "pyproject.toml"), "r") as f:
+                    content = f.read()
+                    if "[tool.poetry]" in content:
+                        commands["package_manager"] = "poetry"
+                        commands["install"] = "poetry install"
+                        commands["build"] = "poetry install"
+                        commands["test"] = "poetry run pytest"
+                    elif os.path.exists(os.path.join(repo_path, "Pipfile")):
+                        commands["package_manager"] = "pipenv"
+                        commands["install"] = "pipenv install"
+                        commands["build"] = "pipenv install"
+                        commands["test"] = "pipenv run pytest"
+                    elif os.path.exists(os.path.join(repo_path, "requirements.txt")):
+                        commands["package_manager"] = "pip"
+                        commands["install"] = "pip install -r requirements.txt"
+                        commands["build"] = "pip install -r requirements.txt"
+                        commands["test"] = "pytest"
+                    else:
+                        # pyproject.toml without poetry — assume pip
+                        commands["package_manager"] = "pip"
+                        commands["install"] = "pip install ."
+                        commands["build"] = "pip install ."
+                        commands["test"] = "pytest"
 
         elif os.path.exists(os.path.join(repo_path, "Pipfile")):
             commands["package_manager"] = "pipenv"
             commands["install"] = "pipenv install"
+            commands["build"] = "pipenv install"
             commands["test"] = "pipenv run pytest"
 
         elif os.path.exists(os.path.join(repo_path, "requirements.txt")):
             commands["package_manager"] = "pip"
             commands["install"] = "pip install -r requirements.txt"
+            commands["build"] = "pip install -r requirements.txt"
             commands["test"] = "pytest"
-
-            # Check for setup.py
-            if os.path.exists(os.path.join(repo_path, "setup.py")):
-                commands["build"] = "python setup.py build"
 
         # Rust - Cargo
         elif os.path.exists(os.path.join(repo_path, "Cargo.toml")):
@@ -330,10 +331,10 @@ def git_operations(repo_path: str, operation: str, **kwargs) -> str:
                     {"status": "error", "operation": "create_branch", "message": str(e)}
                 )
 
-            branch_name = kwargs.get(
-                "branch_name",
-                "AiOrteliusBot/dependency",
+            default_branch = (
+                f"OrteliusAiBot/dep-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
             )
+            branch_name = kwargs.get("branch_name", default_branch)
 
             async def _create_branch(server, o, r, b):
                 return await server.create_branch(o, r, b)
@@ -686,21 +687,22 @@ STEP 1: DETECT BUILD COMMANDS
 - Note the install, build, and test commands.
 
 STEP 2: UPDATE DEPENDENCIES
-- For npm/yarn/pnpm: Use apply_all_updates with the dependency file content and outdated packages, then write_dependency_file, then run install command.
-- For pip/poetry: Use apply_all_updates, write_dependency_file, then run install command.
+- For npm/yarn/pnpm: Use apply_all_updates with the dependency file content and outdated packages, then write_dependency_file.
+- For pip/poetry: Use apply_all_updates, then write_dependency_file.
 - For go: Build a SINGLE command with ALL outdated packages: "go get pkg1@version1 pkg2@version2 ... && go mod tidy" and run it using run_build_test. This updates only the specific packages identified as outdated, not the entire dependency tree.
 - For cargo: Run "cargo update" using run_build_test.
 - For other package managers: Use the appropriate bulk update command via run_build_test.
 
 STEP 3: BUILD AND TEST
-- Run the build command using run_build_test. If no build command, skip.
-- Run the test command using run_build_test. If no test command, skip.
-- Do NOT run exploratory commands like "cat go.mod", "go list", "grep" etc. Just build and test.
+- Run the build command (from detect_build_command) using run_build_test. The build command installs dependencies and verifies they resolve correctly.
+- Run the test command (from detect_build_command) using run_build_test. If no test command, skip.
+- run_build_test MUST ONLY be used for: install commands, build commands, test commands, and "go get" commands.
+- NEVER use run_build_test for: cat, grep, ls, pip list, pip freeze, go list, or any other exploratory/inspection command.
 
 STEP 4: HANDLE RESULTS
 - IF build and tests PASS:
-  1. git_operations: create_branch with branch_name="AiOrteliusBot/dependency" (always use this exact name)
-  2. git_operations: push_files with branch_name="AiOrteliusBot/dependency" and message (auto-detects repo, reads modified files, pushes via GitHub MCP)
+  1. git_operations: create_branch (do NOT pass branch_name — the tool generates it automatically as "OrteliusAiBot/dep-<datetime>")
+  2. git_operations: push_files with the SAME branch_name returned by create_branch and a commit message (auto-detects repo, reads modified files, pushes via GitHub MCP)
      - If push_files returns status="no_changes", skip PR and return "All dependencies are already up to date."
   3. create_github_pr with repo_name (owner/repo format), branch_name, title, and body.
      The PR body MUST use this Renovate-style markdown table format:
@@ -740,9 +742,10 @@ STEP 4: HANDLE RESULTS
 IMPORTANT RULES:
 - Do NOT call get_remote_url — create_branch and push_files auto-detect the repo.
 - Do NOT use "commit" or "push" operations. Use "push_files" instead.
-- Do NOT run exploratory shell commands (cat, grep, ls, go list). Only run build/test commands.
+- Do NOT run exploratory or inspection commands via run_build_test. FORBIDDEN commands include: cat, grep, ls, head, tail, pip list, pip freeze, pip show, go list, npm ls, cargo tree, or any command that reads/inspects files or package state.
 - Do NOT call categorize_updates — the orchestrator already did that.
 - Do NOT re-read dependency files to inspect them. Trust the tool outputs.
+- Do NOT create lock files (requirements-lock.txt, etc.). Only modify the dependency file identified by the package manager.
 - Keep ALL your text responses under 50 words. Just state what you're doing next or the final result.
 - Your FINAL response MUST be a JSON object with the result:
   {"status": "pr_created", "url": "<PR_URL>"} or
@@ -787,7 +790,8 @@ def main():
                         f"Update dependencies for repository at {repo_path}. Test the updates and create a PR if successful, or an Issue if they break the build.",
                     )
                 ]
-            }
+            },
+            config={"recursion_limit": 50},
         )
 
         print("\n" + "=" * 80)
