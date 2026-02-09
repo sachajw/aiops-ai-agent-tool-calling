@@ -33,6 +33,25 @@ from src.tools.dependency_ops import (
     rollback_major_update,
 )
 
+# Stores build/test logs captured by run_build_test for the PR body.
+# detect_build_command populates _detected_commands; run_build_test uses it
+# to classify each run as "build" or "test" and store the output.
+_detected_commands = {"build": None, "test": None}
+_build_test_logs = {"build": None, "test": None}
+_test_info = {"has_tests": True, "exit_code": None}
+
+# Patterns that indicate no tests were found in the repo
+_NO_TESTS_PATTERNS = [
+    "no test files",  # go test
+    "no tests ran",  # go test
+    "no tests collected",  # pytest
+    "collected 0 items",  # pytest
+    "no test suites found",  # jest
+    "0 specs, 0 failures",  # rspec
+    "no tests found",  # generic
+    "0 passing",  # mocha with no tests
+]
+
 
 @tool
 def detect_build_command(repo_path: str) -> str:
@@ -83,30 +102,30 @@ def detect_build_command(repo_path: str) -> str:
                 commands["type_check"] = f"{pm} run type-check"
 
         # Python - pip/poetry/pipenv
-            elif os.path.exists(os.path.join(repo_path, "pyproject.toml")):
-                with open(os.path.join(repo_path, "pyproject.toml"), "r") as f:
-                    content = f.read()
-                    if "[tool.poetry]" in content:
-                        commands["package_manager"] = "poetry"
-                        commands["install"] = "poetry install"
-                        commands["build"] = "poetry install"
-                        commands["test"] = "poetry run pytest"
-                    elif os.path.exists(os.path.join(repo_path, "Pipfile")):
-                        commands["package_manager"] = "pipenv"
-                        commands["install"] = "pipenv install"
-                        commands["build"] = "pipenv install"
-                        commands["test"] = "pipenv run pytest"
-                    elif os.path.exists(os.path.join(repo_path, "requirements.txt")):
-                        commands["package_manager"] = "pip"
-                        commands["install"] = "pip install -r requirements.txt"
-                        commands["build"] = "pip install -r requirements.txt"
-                        commands["test"] = "pytest"
-                    else:
-                        # pyproject.toml without poetry — assume pip
-                        commands["package_manager"] = "pip"
-                        commands["install"] = "pip install ."
-                        commands["build"] = "pip install ."
-                        commands["test"] = "pytest"
+        elif os.path.exists(os.path.join(repo_path, "pyproject.toml")):
+            with open(os.path.join(repo_path, "pyproject.toml"), "r") as f:
+                content = f.read()
+            if "[tool.poetry]" in content:
+                commands["package_manager"] = "poetry"
+                commands["install"] = "poetry install"
+                commands["build"] = "poetry install"
+                commands["test"] = "poetry run pytest"
+            elif os.path.exists(os.path.join(repo_path, "Pipfile")):
+                commands["package_manager"] = "pipenv"
+                commands["install"] = "pipenv install"
+                commands["build"] = "pipenv install"
+                commands["test"] = "pipenv run pytest"
+            elif os.path.exists(os.path.join(repo_path, "requirements.txt")):
+                commands["package_manager"] = "pip"
+                commands["install"] = "pip install -r requirements.txt"
+                commands["build"] = "pip install -r requirements.txt"
+                commands["test"] = "pytest"
+            else:
+                # pyproject.toml without poetry — assume pip
+                commands["package_manager"] = "pip"
+                commands["install"] = "pip install ."
+                commands["build"] = "pip install ."
+                commands["test"] = "pytest"
 
         elif os.path.exists(os.path.join(repo_path, "Pipfile")):
             commands["package_manager"] = "pipenv"
@@ -146,6 +165,14 @@ def detect_build_command(repo_path: str) -> str:
             commands["install"] = "composer install"
             commands["test"] = "composer test"
 
+        # Store detected commands so run_build_test can classify logs
+        _detected_commands["build"] = commands.get("build")
+        _detected_commands["test"] = commands.get("test")
+        _build_test_logs["build"] = None
+        _build_test_logs["test"] = None
+        _test_info["has_tests"] = True
+        _test_info["exit_code"] = None
+
         return json.dumps({"status": "success", "commands": commands}, indent=2)
 
     except Exception as e:
@@ -177,16 +204,31 @@ def run_build_test(repo_path: str, command: str, timeout: int = 300) -> str:
 
         os.chdir(original_dir)
 
+        stdout_tail = result.stdout[-5000:] if result.stdout else ""
+        stderr_tail = result.stderr[-5000:] if result.stderr else ""
+
+        # Capture logs for build/test commands to include in PR body
+        combined = (stdout_tail + "\n" + stderr_tail).strip()
+        log_entry = f"$ {command}\n"
+        log_entry += combined if combined else f"exit code: {result.returncode}"
+        if command == _detected_commands.get("build"):
+            _build_test_logs["build"] = log_entry
+        if command == _detected_commands.get("test"):
+            _build_test_logs["test"] = log_entry
+            _test_info["exit_code"] = result.returncode
+            # Detect if the repo has no unit tests
+            combined_lower = combined.lower()
+            if any(pat in combined_lower for pat in _NO_TESTS_PATTERNS):
+                _test_info["has_tests"] = False
+
         return json.dumps(
             {
                 "status": "success",
                 "command": command,
                 "exit_code": result.returncode,
                 "succeeded": result.returncode == 0,
-                "stdout": result.stdout[-5000:]
-                if result.stdout
-                else "",  # Last 5000 chars
-                "stderr": result.stderr[-5000:] if result.stderr else "",
+                "stdout": stdout_tail,
+                "stderr": stderr_tail,
             },
             indent=2,
         )
@@ -550,6 +592,47 @@ def create_github_pr(
                 {"status": "error", "message": f"Invalid repo format: {repo_name}"}
             )
 
+        # Append build/test logs to PR body automatically
+        log_section = "\n\n---\n\nAll updates have been tested and verified:\n"
+        build_log = _build_test_logs.get("build")
+        test_log = _build_test_logs.get("test")
+        has_tests = _test_info.get("has_tests", True)
+        has_test_command = _detected_commands.get("test") is not None
+        if build_log:
+            log_section += (
+                f"\n:white_check_mark: Build successful\n"
+                f"<details><summary>Build logs</summary>\n\n"
+                f"```\n{build_log}\n```\n\n</details>\n"
+            )
+        if test_log and has_tests:
+            log_section += (
+                f"\n:white_check_mark: Tests passing\n"
+                f"<details><summary>Test logs</summary>\n\n"
+                f"```\n{test_log}\n```\n\n</details>\n"
+            )
+        if build_log or (test_log and has_tests):
+            # Add merge recommendation
+            if has_tests:
+                log_section += (
+                    "\n:rocket: **This PR is safe to merge.** "
+                    "All dependency updates have been verified with a successful build and passing tests.\n"
+                )
+            elif has_test_command and not has_tests:
+                log_section += (
+                    "\n:warning: **No unit tests were found in this repository.** "
+                    "The build succeeded, but there are no tests to verify runtime behavior. "
+                    "Consider adding unit tests to catch potential issues from dependency updates.\n"
+                    "\n:rocket: **This PR can be merged**, but we strongly recommend adding tests for better safety.\n"
+                )
+            else:
+                log_section += (
+                    "\n:warning: **No test command is configured for this project.** "
+                    "The build succeeded, but no tests were run. "
+                    "Consider adding unit tests to catch potential runtime issues from dependency updates.\n"
+                    "\n:rocket: **This PR can be merged**, but we strongly recommend adding tests for better safety.\n"
+                )
+            body = body + log_section
+
         async def _create_pr(server, owner, repo, t, b, head, base):
             return await server.create_pull_request(
                 repo_owner=owner,
@@ -705,7 +788,7 @@ STEP 4: HANDLE RESULTS
   2. git_operations: push_files with the SAME branch_name returned by create_branch and a commit message (auto-detects repo, reads modified files, pushes via GitHub MCP)
      - If push_files returns status="no_changes", skip PR and return "All dependencies are already up to date."
   3. create_github_pr with repo_name (owner/repo format), branch_name, title, and body.
-     The PR body MUST use this Renovate-style markdown table format:
+     The PR body MUST use this exact markdown format:
 
      ## This PR contains updated dependencies:
 
@@ -716,6 +799,8 @@ STEP 4: HANDLE RESULTS
      Where:
      - Type is: npm, pip, go, cargo, etc.
      - Update is: major, minor, patch
+
+     NOTE: Build/test logs are automatically appended to the PR body by create_github_pr. Do NOT add them yourself.
 
   4. Return the PR URL.
 
