@@ -18,13 +18,13 @@ Both tools automate this process, but with very different approaches.
 
 ## At a Glance
 
-| | **AI Dependency Updater** | **Renovate** |
-|---|---|---|
-| **Type** | AI-powered experimental tool | Industry-standard automation |
-| **Maintainer** | Internal/Custom | Mend.io (Open Source) |
-| **Maturity** | New/Experimental | Mature, battle-tested |
-| **Language Support** | ~11 languages | 120+ package managers |
-| **Platform Support** | GitHub only | GitHub, GitLab, Bitbucket, Azure DevOps, Gitea, more |
+|                      | **AI Dependency Updater**    | **Renovate**                                         |
+| -------------------- | ---------------------------- | ---------------------------------------------------- |
+| **Type**             | AI-powered experimental tool | Industry-standard automation                         |
+| **Maintainer**       | Internal/Custom              | Mend.io (Open Source)                                |
+| **Maturity**         | New/Experimental             | Mature, battle-tested                                |
+| **Language Support** | ~11 languages                | 120+ package managers                                |
+| **Platform Support** | GitHub only                  | GitHub, GitLab, Bitbucket, Azure DevOps, Gitea, more |
 
 ---
 
@@ -43,7 +43,7 @@ Think of Renovate like a **highly organized personal assistant** who:
 - **Works on a schedule** - Configure "only update on Tuesdays" or "max 2 updates per hour"
 - **Provides a dashboard** - See all pending updates in one place
 
-**Limitation:** It follows rules blindly. If an update breaks something, it reports the failure but doesn't understand *why*.
+**Limitation:** It follows rules blindly. If an update breaks something, it reports the failure but doesn't understand _why_.
 
 ### AI Dependency Updater: The Smart Problem-Solver
 
@@ -61,30 +61,30 @@ Think of this tool like a **consultant who diagnoses and fixes problems**:
 
 ## Feature Comparison
 
-| Feature | AI Dependency Updater | Renovate |
-|---------|:---------------------:|:--------:|
-| AI-powered error analysis | ✅ | ❌ |
-| Smart partial rollbacks | ✅ | ❌ |
-| Language/package manager coverage | ~11 | 120+ |
-| Git platform coverage | GitHub | 8+ platforms |
-| Vulnerability alerts | ❌ | ✅ |
-| Onboarding/configuration help | ❌ | ✅ |
-| Dependency dashboard | ❌ | ✅ |
-| Scheduled updates | ❌ | ✅ |
-| Automerge with confidence data | ❌ | ✅ |
-| Grouping related updates | ❌ | ✅ |
-| REST API | ✅ | ❌ (has webhook) |
+| Feature                           | AI Dependency Updater |     Renovate     |
+| --------------------------------- | :-------------------: | :--------------: |
+| AI-powered error analysis         |          ✅           |        ❌        |
+| Smart partial rollbacks           |          ✅           |        ❌        |
+| Language/package manager coverage |          ~11          |       120+       |
+| Git platform coverage             |        GitHub         |   8+ platforms   |
+| Vulnerability alerts              |          ❌           |        ✅        |
+| Onboarding/configuration help     |          ❌           |        ✅        |
+| Dependency dashboard              |          ❌           |        ✅        |
+| Scheduled updates                 |          ❌           |        ✅        |
+| Automerge with confidence data    |          ❌           |        ✅        |
+| Grouping related updates          |          ❌           |        ✅        |
+| REST API                          |          ✅           | ❌ (has webhook) |
 
 ---
 
 ## Technical Summary
 
-| Aspect | AI Dependency Updater | Renovate |
-|--------|----------------------|----------|
-| **Tech Stack** | Python, LangChain, Claude AI | TypeScript, Node.js |
-| **License** | Proprietary/Internal | AGPL-3.0 (Open Source) |
-| **Deployment** | CLI, FastAPI server, Docker | Docker, npm CLI, GitHub Action, GitLab Runner |
-| **Model** | claude-sonnet-4-5 | N/A (rule-based) |
+| Aspect         | AI Dependency Updater        | Renovate                                      |
+| -------------- | ---------------------------- | --------------------------------------------- |
+| **Tech Stack** | Python, LangChain, Claude AI | TypeScript, Node.js                           |
+| **License**    | Proprietary/Internal         | AGPL-3.0 (Open Source)                        |
+| **Deployment** | CLI, FastAPI server, Docker  | Docker, npm CLI, GitHub Action, GitLab Runner |
+| **Model**      | claude-sonnet-4-5            | N/A (rule-based)                              |
 
 ---
 
@@ -110,16 +110,17 @@ Think of this tool like a **consultant who diagnoses and fixes problems**:
 
 ## The Bottom Line
 
-| | **Renovate** | **AI Dependency Updater** |
-|---|---|---|
-| **Best analogy** | Experienced assistant who needs direction | Clever intern who figures things out |
-| **Philosophy** | Predictable, controllable, comprehensive | Experimental, intelligent, adaptive |
-| **Risk profile** | Conservative - you control everything | Experimental - AI makes judgment calls |
+|                  | **Renovate**                              | **AI Dependency Updater**              |
+| ---------------- | ----------------------------------------- | -------------------------------------- |
+| **Best analogy** | Experienced assistant who needs direction | Clever intern who figures things out   |
+| **Philosophy**   | Predictable, controllable, comprehensive  | Experimental, intelligent, adaptive    |
+| **Risk profile** | Conservative - you control everything     | Experimental - AI makes judgment calls |
 
 ---
 
 ## Questions?
 
 For more details on each tool:
+
 - **AI Dependency Updater**: See `CLAUDE.md` and `README.md` in this repository
 - **Renovate**: See [docs.renovatebot.com](https://docs.renovatebot.com)
